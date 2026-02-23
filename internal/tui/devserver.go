@@ -71,30 +71,34 @@ func (a *App) updateDevServer(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // startDevServerCmd returns a tea.Cmd that starts a dev server for an agent.
+// Captures immutable references before the closure.
 func (a *App) startDevServerCmd(agentName string, agentPaneID string, workDir string) tea.Cmd {
+	tmuxDriver := a.tmux
+	ports := a.ports
+
 	return func() tea.Msg {
-		// Allocate a port
-		allocatedPort, err := a.ports.Allocate(agentName)
+		// Allocate a port (thread-safe via mutex)
+		allocatedPort, err := ports.Allocate(agentName)
 		if err != nil {
 			return devServerStartedMsg{agentName: agentName, err: err}
 		}
 
 		// Create a new pane below the agent's pane
-		paneID, err := a.tmux.SplitWindowV(agentPaneID, workDir)
+		paneID, err := tmuxDriver.SplitWindowV(agentPaneID, workDir)
 		if err != nil {
-			a.ports.Release(allocatedPort)
+			ports.Release(allocatedPort)
 			return devServerStartedMsg{agentName: agentName, err: fmt.Errorf("create dev server pane: %w", err)}
 		}
 
 		// Label the dev server pane
 		devTitle := fmt.Sprintf("%s dev :%d", agentName, allocatedPort)
-		_ = a.tmux.SetPaneTitle(paneID, devTitle)
+		_ = tmuxDriver.SetPaneTitle(paneID, devTitle)
 
 		// Run the dev server command
 		devCmd := fmt.Sprintf("npm run dev -- --port %d", allocatedPort)
-		if err := a.tmux.RunInPane(paneID, devCmd); err != nil {
-			a.ports.Release(allocatedPort)
-			_ = a.tmux.KillPane(paneID)
+		if err := tmuxDriver.RunInPane(paneID, devCmd); err != nil {
+			ports.Release(allocatedPort)
+			_ = tmuxDriver.KillPane(paneID)
 			return devServerStartedMsg{agentName: agentName, err: fmt.Errorf("start dev server: %w", err)}
 		}
 

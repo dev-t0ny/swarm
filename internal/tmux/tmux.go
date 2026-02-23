@@ -197,10 +197,12 @@ func (d *Driver) SendText(paneID string, text string) error {
 	return exec.Command("tmux", "send-keys", "-t", paneID, "-l", text).Run()
 }
 
-// PrintInPane prints a message in a pane using echo, then clears it for the next command.
+// PrintBanner prints a message in a pane using printf, escaping single quotes for safety.
 func (d *Driver) PrintBanner(paneID string, lines []string) error {
 	for _, line := range lines {
-		cmd := fmt.Sprintf("echo '%s'", line)
+		// Escape single quotes: replace ' with '\''
+		escaped := strings.ReplaceAll(line, "'", "'\\''")
+		cmd := fmt.Sprintf("printf '%%s\\n' '%s'", escaped)
 		if err := d.RunInPane(paneID, cmd); err != nil {
 			return err
 		}

@@ -7,7 +7,10 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/dev-t0ny/swarm/internal/config"
 	gitpkg "github.com/dev-t0ny/swarm/internal/git"
+	"github.com/dev-t0ny/swarm/internal/port"
+	"github.com/dev-t0ny/swarm/internal/tmux"
 )
 
 // closeAction represents the user's choice for closing an agent.
@@ -75,29 +78,34 @@ func (a *App) updateCloseAgent(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // closeAgentCmd returns a tea.Cmd that performs the chosen close action.
+// Captures all needed state before the closure.
 func (a *App) closeAgentCmd(action closeAction) tea.Cmd {
 	if a.cursor >= len(a.agents) {
 		return nil
 	}
-	agent := a.agents[a.cursor]
+	agentInst := a.agents[a.cursor]
+	repoRoot := a.repoRoot
+	tmuxDriver := a.tmux
+	ports := a.ports
+	cfgAgents := a.cfg.Agents
 
 	return func() tea.Msg {
 		switch action {
 		case closeApply:
-			return a.doCloseApply(agent)
+			return doCloseApply(agentInst, repoRoot, tmuxDriver, cfgAgents)
 		case closeKeep:
-			return a.doCloseKeep(agent)
+			return doCloseKeep(agentInst, tmuxDriver, ports)
 		case closeDrop:
-			return a.doCloseDrop(agent)
+			return doCloseDrop(agentInst, repoRoot, tmuxDriver, ports)
 		}
-		return agentClosedMsg{agentName: agent.Name, action: action}
+		return agentClosedMsg{agentName: agentInst.Name, action: action}
 	}
 }
 
 // doCloseApply tells the agent to merge its changes.
-func (a *App) doCloseApply(agent AgentInstance) agentClosedMsg {
+func doCloseApply(agentInst AgentInstance, repoRoot string, tmuxDriver *tmux.Driver, cfgAgents map[string]config.Agent) agentClosedMsg {
 	// Get the base branch
-	gitMgr := gitpkg.NewManager(a.repoRoot)
+	gitMgr := gitpkg.NewManager(repoRoot)
 	baseBranch, err := gitMgr.GetCurrentBranch()
 	if err != nil {
 		baseBranch = "main"
@@ -106,56 +114,56 @@ func (a *App) doCloseApply(agent AgentInstance) agentClosedMsg {
 	// Construct the merge prompt from config or default
 	mergePrompt := fmt.Sprintf(
 		"Merge your changes from branch %s into %s. Resolve any conflicts intelligently. Confirm when done.",
-		agent.Branch, baseBranch,
+		agentInst.Branch, baseBranch,
 	)
-	if cfgAgent, ok := a.cfg.Agents[agent.AgentType]; ok && cfgAgent.MergePrompt != "" {
+	if cfgAgent, ok := cfgAgents[agentInst.AgentType]; ok && cfgAgent.MergePrompt != "" {
 		mergePrompt = strings.ReplaceAll(cfgAgent.MergePrompt, "{base_branch}", baseBranch)
 	}
 
 	// Focus the agent's pane and send the merge instruction
-	_ = a.tmux.SelectPane(agent.PaneID)
-	_ = a.tmux.SendKeys(agent.PaneID, mergePrompt)
+	_ = tmuxDriver.SelectPane(agentInst.PaneID)
+	_ = tmuxDriver.SendKeys(agentInst.PaneID, mergePrompt)
 
 	return agentClosedMsg{
-		agentName: agent.Name,
+		agentName: agentInst.Name,
 		action:    closeApply,
 	}
 }
 
 // doCloseKeep kills the pane but preserves the worktree and branch.
-func (a *App) doCloseKeep(agent AgentInstance) agentClosedMsg {
+func doCloseKeep(agentInst AgentInstance, tmuxDriver *tmux.Driver, ports *port.Allocator) agentClosedMsg {
 	// Kill dev server pane if running
-	if agent.DevPaneID != "" {
-		_ = a.tmux.KillPane(agent.DevPaneID)
-		a.ports.ReleaseByAgent(agent.Name)
+	if agentInst.DevPaneID != "" {
+		_ = tmuxDriver.KillPane(agentInst.DevPaneID)
+		ports.ReleaseByAgent(agentInst.Name)
 	}
 
 	// Kill the agent pane
-	_ = a.tmux.KillPane(agent.PaneID)
+	_ = tmuxDriver.KillPane(agentInst.PaneID)
 
 	return agentClosedMsg{
-		agentName: agent.Name,
+		agentName: agentInst.Name,
 		action:    closeKeep,
 	}
 }
 
 // doCloseDrop kills everything and deletes the worktree and branch.
-func (a *App) doCloseDrop(agent AgentInstance) agentClosedMsg {
+func doCloseDrop(agentInst AgentInstance, repoRoot string, tmuxDriver *tmux.Driver, ports *port.Allocator) agentClosedMsg {
 	// Kill dev server pane if running
-	if agent.DevPaneID != "" {
-		_ = a.tmux.KillPane(agent.DevPaneID)
-		a.ports.ReleaseByAgent(agent.Name)
+	if agentInst.DevPaneID != "" {
+		_ = tmuxDriver.KillPane(agentInst.DevPaneID)
+		ports.ReleaseByAgent(agentInst.Name)
 	}
 
 	// Kill the agent pane
-	_ = a.tmux.KillPane(agent.PaneID)
+	_ = tmuxDriver.KillPane(agentInst.PaneID)
 
 	// Remove the worktree and delete the branch
-	gitMgr := gitpkg.NewManager(a.repoRoot)
-	_ = gitMgr.RemoveWorktree(agent.Name, true)
+	gitMgr := gitpkg.NewManager(repoRoot)
+	_ = gitMgr.RemoveWorktree(agentInst.Name, true)
 
 	return agentClosedMsg{
-		agentName: agent.Name,
+		agentName: agentInst.Name,
 		action:    closeDrop,
 	}
 }
@@ -215,7 +223,7 @@ func (a *App) removeAgent(name string) {
 // viewCloseAgent renders the close agent dialog.
 func (a *App) viewCloseAgent() string {
 	if a.cursor >= len(a.agents) {
-		a.screen = ScreenDashboard
+		// Shouldn't happen — guard against it by showing dashboard
 		return a.viewDashboard()
 	}
 

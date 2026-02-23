@@ -3,11 +3,13 @@ package port
 import (
 	"fmt"
 	"net"
+	"sync"
 )
 
 // Allocator manages port assignment for dev servers.
 type Allocator struct {
 	BasePort int
+	mu       sync.Mutex
 	used     map[int]string // port -> agent name
 }
 
@@ -22,6 +24,9 @@ func NewAllocator(basePort int) *Allocator {
 // Allocate assigns the next available port for the given agent.
 // It starts from BasePort and increments until it finds a free port.
 func (a *Allocator) Allocate(agentName string) (int, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
 	for port := a.BasePort; port < a.BasePort+100; port++ {
 		// Check if already allocated by us
 		if _, taken := a.used[port]; taken {
@@ -38,11 +43,15 @@ func (a *Allocator) Allocate(agentName string) (int, error) {
 
 // Release frees a port allocation.
 func (a *Allocator) Release(port int) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	delete(a.used, port)
 }
 
 // ReleaseByAgent frees all ports allocated to an agent.
 func (a *Allocator) ReleaseByAgent(agentName string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	for port, name := range a.used {
 		if name == agentName {
 			delete(a.used, port)
@@ -50,8 +59,17 @@ func (a *Allocator) ReleaseByAgent(agentName string) {
 	}
 }
 
+// ReleaseAll frees all port allocations.
+func (a *Allocator) ReleaseAll() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.used = make(map[int]string)
+}
+
 // GetPort returns the port allocated to an agent, or 0 if none.
 func (a *Allocator) GetPort(agentName string) int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	for port, name := range a.used {
 		if name == agentName {
 			return port

@@ -55,22 +55,24 @@ func (a *App) updateCleanup(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // cleanupAllCmd returns a tea.Cmd that tears down everything.
+// Captures all needed state before the closure.
 func (a *App) cleanupAllCmd() tea.Cmd {
-	// Capture current state
 	agents := make([]AgentInstance, len(a.agents))
 	copy(agents, a.agents)
+	repoRoot := a.repoRoot
+	tmuxDriver := a.tmux
 
 	return func() tea.Msg {
 		// Kill all agent panes and dev server panes
-		for _, agent := range agents {
-			if agent.DevPaneID != "" {
-				_ = a.tmux.KillPane(agent.DevPaneID)
+		for _, ag := range agents {
+			if ag.DevPaneID != "" {
+				_ = tmuxDriver.KillPane(ag.DevPaneID)
 			}
-			_ = a.tmux.KillPane(agent.PaneID)
+			_ = tmuxDriver.KillPane(ag.PaneID)
 		}
 
 		// Remove all worktrees and branches
-		gitMgr := gitpkg.NewManager(a.repoRoot)
+		gitMgr := gitpkg.NewManager(repoRoot)
 		err := gitMgr.RemoveAllWorktrees()
 
 		return cleanupDoneMsg{err: err}
@@ -82,7 +84,7 @@ func (a *App) handleCleanupDone(msg cleanupDoneMsg) (tea.Model, tea.Cmd) {
 	// Clear all state
 	a.agents = []AgentInstance{}
 	a.cursor = 0
-	a.ports.ReleaseByAgent("") // release all — we'll just recreate the allocator
+	a.ports.ReleaseAll()
 	a.nextAgentNum = 1
 
 	if msg.err != nil {

@@ -56,6 +56,7 @@ type AgentInstance struct {
 	DevPaneID  string // pane ID for dev server, if any
 	DevPort    int
 	Status     AgentStatus
+	installCmd string // cached install command from config
 }
 
 // App is the root bubbletea model.
@@ -290,6 +291,13 @@ func (a *App) viewDashboard() string {
 		b.WriteString(renderKeyHint("C", "cleanup all"))
 	}
 	b.WriteString(renderKeyHint("q", "quit"))
+
+	// Tmux navigation hint
+	if len(a.agents) > 0 {
+		b.WriteString("\n")
+		b.WriteString(descStyle.Render("  Ctrl-b ; to return here"))
+		b.WriteString("\n")
+	}
 
 	// Status bar
 	b.WriteString("\n")

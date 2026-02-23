@@ -78,9 +78,20 @@ func (m *Manager) isInGitignore(path string) bool {
 	return false
 }
 
+// HasCommits checks if the repository has any commits.
+func (m *Manager) HasCommits() bool {
+	err := exec.Command("git", "-C", m.RepoRoot, "rev-parse", "HEAD").Run()
+	return err == nil
+}
+
 // CreateWorktree creates a new git worktree with a new branch.
-// Returns the absolute path to the created worktree.
+// Returns the absolute path to the created worktree and the branch name.
 func (m *Manager) CreateWorktree(name string, baseBranch string) (string, string, error) {
+	// Check for commits first
+	if !m.HasCommits() {
+		return "", "", fmt.Errorf("repository has no commits yet; make an initial commit first")
+	}
+
 	worktreePath := filepath.Join(m.SwarmDir, name)
 	branchName := "swarm/" + name
 
@@ -103,27 +114,34 @@ func (m *Manager) CreateWorktree(name string, baseBranch string) (string, string
 	return worktreePath, branchName, nil
 }
 
-// RemoveWorktree removes a worktree and its branch.
+// RemoveWorktree removes a worktree and optionally its branch.
+// Uses best-effort cleanup: tries git worktree remove first, falls back to manual removal.
 func (m *Manager) RemoveWorktree(name string, deleteBranch bool) error {
 	worktreePath := filepath.Join(m.SwarmDir, name)
 	branchName := "swarm/" + name
+	var errs []string
 
 	// Remove the worktree
 	cmd := exec.Command("git", "-C", m.RepoRoot, "worktree", "remove", "--force", worktreePath)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		// If worktree remove fails, try manual cleanup
-		_ = os.RemoveAll(worktreePath)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		// Fallback: manual cleanup
+		if rmErr := os.RemoveAll(worktreePath); rmErr != nil {
+			errs = append(errs, fmt.Sprintf("remove worktree dir: %v (git said: %s)", rmErr, strings.TrimSpace(string(output))))
+		}
 		// Prune stale worktree entries
 		_ = exec.Command("git", "-C", m.RepoRoot, "worktree", "prune").Run()
 	}
-	_ = output
 
 	// Delete the branch if requested
 	if deleteBranch {
-		_ = exec.Command("git", "-C", m.RepoRoot, "branch", "-D", branchName).Run()
+		if output, err := exec.Command("git", "-C", m.RepoRoot, "branch", "-D", branchName).CombinedOutput(); err != nil {
+			errs = append(errs, fmt.Sprintf("delete branch %s: %s", branchName, strings.TrimSpace(string(output))))
+		}
 	}
 
+	if len(errs) > 0 {
+		return fmt.Errorf("cleanup issues: %s", strings.Join(errs, "; "))
+	}
 	return nil
 }
 

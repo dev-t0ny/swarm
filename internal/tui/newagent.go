@@ -24,9 +24,15 @@ const (
 	newAgentDone
 )
 
+// agentOption is an agent type with its availability status.
+type agentOption struct {
+	agent.Type
+	Available bool
+}
+
 // newAgentModel holds state for the new agent dialog.
 type newAgentModel struct {
-	agents   []agent.Type
+	agents   []agentOption
 	cursor   int
 	state    newAgentState
 	message  string
@@ -34,12 +40,12 @@ type newAgentModel struct {
 
 func newNewAgentModel() newAgentModel {
 	allAgents := agent.AllAgents()
-	var types []agent.Type
+	var options []agentOption
 	for _, a := range allAgents {
-		types = append(types, a.Agent)
+		options = append(options, agentOption{Type: a.Agent, Available: a.Available})
 	}
 	return newAgentModel{
-		agents: types,
+		agents: options,
 		state:  newAgentPicking,
 	}
 }
@@ -47,8 +53,9 @@ func newNewAgentModel() newAgentModel {
 // --- Messages for async operations ---
 
 type agentCreatedMsg struct {
-	instance AgentInstance
-	err      error
+	instance   AgentInstance
+	linkErrors []string
+	err        error
 }
 
 type depsInstalledMsg struct {
@@ -71,9 +78,13 @@ func (a *App) updateNewAgent(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		case key.Matches(msg, a.keys.Focus): // Enter
 			selected := a.newAgent.agents[a.newAgent.cursor]
+			if !selected.Available {
+				// Can't select unavailable agents
+				return a, nil
+			}
 			a.newAgent.state = newAgentCreating
 			a.newAgent.message = fmt.Sprintf("Creating worktree for %s...", selected.Name)
-			return a, a.createAgentCmd(selected)
+			return a, a.createAgentCmd(selected.Type)
 		case key.Matches(msg, a.keys.Back):
 			a.screen = ScreenDashboard
 			a.newAgent = newNewAgentModel()
@@ -88,12 +99,22 @@ func (a *App) updateNewAgent(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // createAgentCmd returns a tea.Cmd that creates a worktree, symlinks, and opens a tmux pane.
+// All mutable App state is captured into local variables before the closure to avoid races.
 func (a *App) createAgentCmd(agentType agent.Type) tea.Cmd {
-	return func() tea.Msg {
-		agentName := fmt.Sprintf("agent-%d", a.nextAgentNum)
+	// Capture all state needed by the closure BEFORE returning the Cmd.
+	agentName := fmt.Sprintf("agent-%d", a.nextAgentNum)
+	repoRoot := a.repoRoot
+	symlinks := a.cfg.Symlinks
+	swarmPaneID := a.swarmPaneID
+	tmuxDriver := a.tmux
+	installCmd := a.cfg.InstallCommand
 
+	// Pre-increment to avoid race if user creates multiple agents rapidly.
+	a.nextAgentNum++
+
+	return func() tea.Msg {
 		// 1. Create worktree
-		gitMgr := gitpkg.NewManager(a.repoRoot)
+		gitMgr := gitpkg.NewManager(repoRoot)
 		if err := gitMgr.EnsureSwarmDir(); err != nil {
 			return agentCreatedMsg{err: fmt.Errorf("ensure .swarm dir: %w", err)}
 		}
@@ -104,26 +125,34 @@ func (a *App) createAgentCmd(agentType agent.Type) tea.Cmd {
 		}
 
 		// 2. Symlink configured files (.env, etc.)
-		linker := link.NewLinker(a.repoRoot, a.cfg.Symlinks)
-		linker.LinkTo(worktreePath)
+		linker := link.NewLinker(repoRoot, symlinks)
+		results := linker.LinkTo(worktreePath)
+		var linkErrors []string
+		for _, r := range results {
+			if r.Error != nil {
+				linkErrors = append(linkErrors, fmt.Sprintf("%s: %v", r.File, r.Error))
+			}
+		}
 
 		// 3. Create tmux pane
-		paneID, err := a.tmux.SplitWindowH(a.swarmPaneID, worktreePath)
+		paneID, err := tmuxDriver.SplitWindowH(swarmPaneID, worktreePath)
 		if err != nil {
+			// Rollback: clean up orphaned worktree
+			_ = gitMgr.RemoveWorktree(agentName, true)
 			return agentCreatedMsg{err: fmt.Errorf("create tmux pane: %w", err)}
 		}
 
 		// 4. Label the pane so it's clear which worktree it belongs to
 		paneTitle := fmt.Sprintf("%s (%s) %s", agentName, agentType.Name, branchName)
-		_ = a.tmux.SetPaneTitle(paneID, paneTitle)
+		_ = tmuxDriver.SetPaneTitle(paneID, paneTitle)
 
 		// Enable pane border titles on first agent creation
-		_ = a.tmux.EnablePaneTitles()
+		_ = tmuxDriver.EnablePaneTitles()
 		// Also title the swarm control pane
-		_ = a.tmux.SetPaneTitle(a.swarmPaneID, "swarm")
+		_ = tmuxDriver.SetPaneTitle(swarmPaneID, "swarm")
 
 		// 5. Print a banner in the pane showing context
-		_ = a.tmux.PrintBanner(paneID, []string{
+		_ = tmuxDriver.PrintBanner(paneID, []string{
 			fmt.Sprintf("=== %s ===", agentName),
 			fmt.Sprintf("  Agent:    %s", agentType.Name),
 			fmt.Sprintf("  Branch:   %s", branchName),
@@ -133,26 +162,28 @@ func (a *App) createAgentCmd(agentType agent.Type) tea.Cmd {
 
 		// 6. Launch agent in the pane (if not shell)
 		if agentType.Command != "" {
-			_ = a.tmux.RunInPane(paneID, agentType.Command)
+			_ = tmuxDriver.RunInPane(paneID, agentType.Command)
 		}
 
 		instance := AgentInstance{
-			Name:      agentName,
-			AgentType: agentType.Name,
-			Branch:    branchName,
-			WorkDir:   worktreePath,
-			PaneID:    paneID,
-			Status:    AgentRunning,
+			Name:         agentName,
+			AgentType:    agentType.Name,
+			Branch:       branchName,
+			WorkDir:      worktreePath,
+			PaneID:       paneID,
+			Status:       AgentRunning,
+			installCmd:   installCmd,
 		}
 
-		return agentCreatedMsg{instance: instance}
+		return agentCreatedMsg{instance: instance, linkErrors: linkErrors}
 	}
 }
 
 // installDepsCmd returns a tea.Cmd that runs npm install in a worktree.
-func (a *App) installDepsCmd(agentName string, worktreeDir string) tea.Cmd {
+// installCommand is captured before the closure to avoid reading App state from goroutine.
+func installDepsCmd(agentName string, worktreeDir string, installCommand string) tea.Cmd {
 	return func() tea.Msg {
-		installer := deps.NewInstaller(a.cfg.InstallCommand)
+		installer := deps.NewInstaller(installCommand)
 		if installer.NeedsInstall(worktreeDir) {
 			_, err := installer.Install(worktreeDir)
 			return depsInstalledMsg{agentName: agentName, err: err}
@@ -171,14 +202,18 @@ func (a *App) handleAgentCreated(msg agentCreatedMsg) (tea.Model, tea.Cmd) {
 	}
 
 	a.agents = append(a.agents, msg.instance)
-	a.nextAgentNum++
 	a.cursor = len(a.agents) - 1
+
+	// Show symlink warnings if any
+	if len(msg.linkErrors) > 0 {
+		a.statusMsg = fmt.Sprintf("Symlink warnings: %v", msg.linkErrors)
+	}
 
 	// Start dependency installation in background
 	a.newAgent.state = newAgentInstalling
 	a.newAgent.message = fmt.Sprintf("Installing dependencies for %s...", msg.instance.Name)
 
-	return a, a.installDepsCmd(msg.instance.Name, msg.instance.WorkDir)
+	return a, installDepsCmd(msg.instance.Name, msg.instance.WorkDir, msg.instance.installCmd)
 }
 
 // handleDepsInstalled processes the result of dependency installation.
