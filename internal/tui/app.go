@@ -67,8 +67,11 @@ type App struct {
 	repoRoot string
 	repoName string
 	tmux     *tmux.Driver
-	swarmPaneID string
+	swarmPaneID  string
 	nextAgentNum int
+
+	// Sub-models for dialogs
+	newAgent newAgentModel
 
 	// Error/status message
 	statusMsg string
@@ -85,6 +88,7 @@ func NewApp(repoRoot, repoName string, driver *tmux.Driver, swarmPaneID string) 
 		tmux:         driver,
 		swarmPaneID:  swarmPaneID,
 		nextAgentNum: 1,
+		newAgent:     newNewAgentModel(),
 	}
 }
 
@@ -101,6 +105,12 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.height = msg.Height
 		return a, nil
 
+	// Handle async messages from any screen
+	case agentCreatedMsg:
+		return a.handleAgentCreated(msg)
+	case depsInstalledMsg:
+		return a.handleDepsInstalled(msg)
+
 	case tea.KeyMsg:
 		// Global keys that work on any screen
 		if key.Matches(msg, a.keys.Quit) {
@@ -108,9 +118,15 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// Back key returns to dashboard from any sub-screen
+		// (but only if we're not in the middle of an async operation)
 		if key.Matches(msg, a.keys.Back) && a.screen != ScreenDashboard {
+			if a.screen == ScreenNewAgent && (a.newAgent.state == newAgentCreating || a.newAgent.state == newAgentInstalling) {
+				// Don't allow back during creation
+				return a, nil
+			}
 			a.screen = ScreenDashboard
 			a.statusMsg = ""
+			a.newAgent = newNewAgentModel()
 			return a, nil
 		}
 
@@ -118,6 +134,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch a.screen {
 		case ScreenDashboard:
 			return a.updateDashboard(msg)
+		case ScreenNewAgent:
+			return a.updateNewAgent(msg)
 		}
 	}
 
@@ -137,6 +155,7 @@ func (a *App) updateDashboard(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case key.Matches(msg, a.keys.NewAgent):
 		a.screen = ScreenNewAgent
+		a.newAgent = newNewAgentModel()
 	case key.Matches(msg, a.keys.Focus):
 		if len(a.agents) > 0 {
 			agent := a.agents[a.cursor]
@@ -214,13 +233,11 @@ func (a *App) viewDashboard() string {
 				nameStyle = idleAgentStyle
 			}
 
-			line := fmt.Sprintf(" %s %s", indicator, nameStyle.Render(agent.Name))
-			agentType := descStyle.Render(agent.AgentType)
-
+			var line string
 			if i == a.cursor {
 				line = selectedStyle.Render(fmt.Sprintf(" %s %s %s", "●", agent.Name, agent.AgentType))
 			} else {
-				line = fmt.Sprintf("  %s %s %s", indicator, nameStyle.Render(agent.Name), agentType)
+				line = fmt.Sprintf("  %s %s %s", indicator, nameStyle.Render(agent.Name), descStyle.Render(agent.AgentType))
 			}
 
 			b.WriteString(line)
@@ -257,11 +274,6 @@ func (a *App) viewDashboard() string {
 	}
 
 	return b.String()
-}
-
-// viewNewAgent is a placeholder — will be implemented in Phase 5.
-func (a *App) viewNewAgent() string {
-	return dialogStyle.Render("New Agent (coming soon)\n\nPress esc to go back")
 }
 
 // viewCloseAgent is a placeholder — will be implemented in Phase 7.
