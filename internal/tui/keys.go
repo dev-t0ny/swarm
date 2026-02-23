@@ -1,0 +1,58 @@
+package tui
+
+import "github.com/charmbracelet/bubbles/key"
+
+// KeyMap defines the keybindings for the TUI.
+type KeyMap struct {
+	NewAgent  key.Binding
+	DevServer key.Binding
+	Focus     key.Binding
+	Close     key.Binding
+	Cleanup   key.Binding
+	Quit      key.Binding
+	Up        key.Binding
+	Down      key.Binding
+	Back      key.Binding
+}
+
+// DefaultKeyMap returns the default keybindings.
+func DefaultKeyMap() KeyMap {
+	return KeyMap{
+		NewAgent: key.NewBinding(
+			key.WithKeys("n"),
+			key.WithHelp("n", "new agent"),
+		),
+		DevServer: key.NewBinding(
+			key.WithKeys("d"),
+			key.WithHelp("d", "dev server"),
+		),
+		Focus: key.NewBinding(
+			key.WithKeys("enter"),
+			key.WithHelp("enter", "focus agent"),
+		),
+		Close: key.NewBinding(
+			key.WithKeys("k"),
+			key.WithHelp("k", "close agent"),
+		),
+		Cleanup: key.NewBinding(
+			key.WithKeys("c"),
+			key.WithHelp("c", "cleanup all"),
+		),
+		Quit: key.NewBinding(
+			key.WithKeys("q", "ctrl+c"),
+			key.WithHelp("q", "quit"),
+		),
+		Up: key.NewBinding(
+			key.WithKeys("up", "j"),
+			key.WithHelp("up/j", "move up"),
+		),
+		Down: key.NewBinding(
+			key.WithKeys("down", "k"),
+			key.WithHelp("down/k", "move down"),
+		),
+		Back: key.NewBinding(
+			key.WithKeys("esc"),
+			key.WithHelp("esc", "back"),
+		),
+	}
+}
