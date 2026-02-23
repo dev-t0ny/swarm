@@ -171,3 +171,39 @@ func GetCurrentPaneID() (string, error) {
 func (d *Driver) RunInPane(paneID string, command string) error {
 	return exec.Command("tmux", "send-keys", "-t", paneID, command, "Enter").Run()
 }
+
+// SetPaneTitle sets the title of a tmux pane (visible in pane border).
+func (d *Driver) SetPaneTitle(paneID string, title string) error {
+	return exec.Command("tmux", "select-pane", "-t", paneID, "-T", title).Run()
+}
+
+// RenameWindow renames the tmux window.
+func (d *Driver) RenameWindow(name string) error {
+	return exec.Command("tmux", "rename-window", "-t", d.SessionName, name).Run()
+}
+
+// SetPaneBorderFormat enables pane border labels showing titles.
+func (d *Driver) EnablePaneTitles() error {
+	// Show pane titles in the border
+	if err := exec.Command("tmux", "set-option", "-t", d.SessionName, "pane-border-status", "top").Run(); err != nil {
+		return err
+	}
+	// Format: show the pane title
+	return exec.Command("tmux", "set-option", "-t", d.SessionName, "pane-border-format", " #{pane_title} ").Run()
+}
+
+// SendText sends raw text to a pane without pressing Enter.
+func (d *Driver) SendText(paneID string, text string) error {
+	return exec.Command("tmux", "send-keys", "-t", paneID, "-l", text).Run()
+}
+
+// PrintInPane prints a message in a pane using echo, then clears it for the next command.
+func (d *Driver) PrintBanner(paneID string, lines []string) error {
+	for _, line := range lines {
+		cmd := fmt.Sprintf("echo '%s'", line)
+		if err := d.RunInPane(paneID, cmd); err != nil {
+			return err
+		}
+	}
+	return d.RunInPane(paneID, "echo ''")
+}

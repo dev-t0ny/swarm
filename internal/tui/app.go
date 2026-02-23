@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/dev-t0ny/swarm/internal/port"
 	"github.com/dev-t0ny/swarm/internal/tmux"
 )
 
@@ -71,7 +72,11 @@ type App struct {
 	nextAgentNum int
 
 	// Sub-models for dialogs
-	newAgent newAgentModel
+	newAgent  newAgentModel
+	devServer devServerModel
+
+	// Port allocator
+	ports *port.Allocator
 
 	// Error/status message
 	statusMsg string
@@ -89,6 +94,8 @@ func NewApp(repoRoot, repoName string, driver *tmux.Driver, swarmPaneID string) 
 		swarmPaneID:  swarmPaneID,
 		nextAgentNum: 1,
 		newAgent:     newNewAgentModel(),
+		devServer:    newDevServerModel(),
+		ports:        port.NewAllocator(3000),
 	}
 }
 
@@ -110,6 +117,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a.handleAgentCreated(msg)
 	case depsInstalledMsg:
 		return a.handleDepsInstalled(msg)
+	case devServerStartedMsg:
+		return a.handleDevServerStarted(msg)
 
 	case tea.KeyMsg:
 		// Global keys that work on any screen
@@ -136,6 +145,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a.updateDashboard(msg)
 		case ScreenNewAgent:
 			return a.updateNewAgent(msg)
+		case ScreenDevServer:
+			return a.updateDevServer(msg)
 		}
 	}
 
@@ -279,11 +290,6 @@ func (a *App) viewDashboard() string {
 // viewCloseAgent is a placeholder — will be implemented in Phase 7.
 func (a *App) viewCloseAgent() string {
 	return dialogStyle.Render("Close Agent (coming soon)\n\nPress esc to go back")
-}
-
-// viewDevServer is a placeholder — will be implemented in Phase 6.
-func (a *App) viewDevServer() string {
-	return dialogStyle.Render("Dev Server (coming soon)\n\nPress esc to go back")
 }
 
 // viewCleanup is a placeholder — will be implemented in Phase 8.

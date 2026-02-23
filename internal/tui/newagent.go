@@ -113,7 +113,25 @@ func (a *App) createAgentCmd(agentType agent.Type) tea.Cmd {
 			return agentCreatedMsg{err: fmt.Errorf("create tmux pane: %w", err)}
 		}
 
-		// 4. Launch agent in the pane (if not shell)
+		// 4. Label the pane so it's clear which worktree it belongs to
+		paneTitle := fmt.Sprintf("%s (%s) %s", agentName, agentType.Name, branchName)
+		_ = a.tmux.SetPaneTitle(paneID, paneTitle)
+
+		// Enable pane border titles on first agent creation
+		_ = a.tmux.EnablePaneTitles()
+		// Also title the swarm control pane
+		_ = a.tmux.SetPaneTitle(a.swarmPaneID, "swarm")
+
+		// 5. Print a banner in the pane showing context
+		_ = a.tmux.PrintBanner(paneID, []string{
+			fmt.Sprintf("=== %s ===", agentName),
+			fmt.Sprintf("  Agent:    %s", agentType.Name),
+			fmt.Sprintf("  Branch:   %s", branchName),
+			fmt.Sprintf("  Worktree: %s", worktreePath),
+			"===",
+		})
+
+		// 6. Launch agent in the pane (if not shell)
 		if agentType.Command != "" {
 			_ = a.tmux.RunInPane(paneID, agentType.Command)
 		}
