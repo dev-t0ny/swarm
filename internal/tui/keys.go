@@ -28,27 +28,27 @@ func DefaultKeyMap() KeyMap {
 		),
 		Focus: key.NewBinding(
 			key.WithKeys("enter"),
-			key.WithHelp("enter", "focus agent"),
+			key.WithHelp("enter", "focus"),
 		),
 		Close: key.NewBinding(
-			key.WithKeys("k"),
-			key.WithHelp("k", "close agent"),
+			key.WithKeys("x"),
+			key.WithHelp("x", "close agent"),
 		),
 		Cleanup: key.NewBinding(
-			key.WithKeys("c"),
-			key.WithHelp("c", "cleanup all"),
+			key.WithKeys("C"),
+			key.WithHelp("C", "cleanup all"),
 		),
 		Quit: key.NewBinding(
 			key.WithKeys("q", "ctrl+c"),
 			key.WithHelp("q", "quit"),
 		),
 		Up: key.NewBinding(
-			key.WithKeys("up", "j"),
-			key.WithHelp("up/j", "move up"),
+			key.WithKeys("up", "k"),
+			key.WithHelp("up/k", "up"),
 		),
 		Down: key.NewBinding(
-			key.WithKeys("down", "k"),
-			key.WithHelp("down/k", "move down"),
+			key.WithKeys("down", "j"),
+			key.WithHelp("down/j", "down"),
 		),
 		Back: key.NewBinding(
 			key.WithKeys("esc"),

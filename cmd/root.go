@@ -56,7 +56,7 @@ func runSwarm(cmd *cobra.Command, args []string) error {
 	_ = driver.ResizePane(paneID, 34)
 
 	// Step 6: Launch the TUI
-	return tui.Run()
+	return tui.Run(repoRoot, repoName, driver, paneID)
 }
 
 // bootstrapTmux creates a tmux session (or reattaches) and re-execs swarm inside it.
