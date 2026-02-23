@@ -257,20 +257,14 @@ func (d *Driver) SetPaneTitle(paneID string, title string) error {
 // ConfigureSession sets up tmux styling: status bar, pane borders, and layout behavior.
 func (d *Driver) ConfigureSession() error {
 	opts := [][]string{
-		// Status bar
-		{"status-position", "bottom"},
-		{"status-style", "bg=#1a1b26,fg=#a9b1d6"},
-		{"status-left", " #[fg=#7c3aed,bold]swarm#[default] "},
-		{"status-left-length", "20"},
-		{"status-right", ""},
-		{"status-right-length", "0"},
+		// Hide the status bar entirely — the TUI shows all info
+		{"status", "off"},
 
-		// Pane borders
+		// Pane borders — off by default (only one pane at start)
+		// Turned on when agents are spawned via EnablePaneBorders()
+		{"pane-border-status", "off"},
 		{"pane-border-style", "fg=#2a2e3f"},
 		{"pane-active-border-style", "fg=#7c3aed"},
-		// Only show title bar on panes that have a title set
-		{"pane-border-status", "top"},
-		{"pane-border-format", "#{?pane_title, #[fg=#a78bfa,bold]#{pane_title}#[default] ,}"},
 		{"pane-border-lines", "single"},
 
 		// Mouse support — click to focus panes
@@ -290,9 +284,18 @@ func (d *Driver) ConfigureSession() error {
 	return nil
 }
 
-// UpdateStatusRight updates the right side of the status bar dynamically.
-func (d *Driver) UpdateStatusRight(text string) error {
-	return exec.Command("tmux", "set-option", "-t", d.SessionName, "status-right", text).Run()
+// EnablePaneBorders turns on pane border titles (call when agents are spawned).
+func (d *Driver) EnablePaneBorders() error {
+	if err := exec.Command("tmux", "set-option", "-t", d.SessionName, "pane-border-status", "top").Run(); err != nil {
+		return err
+	}
+	return exec.Command("tmux", "set-option", "-t", d.SessionName,
+		"pane-border-format", "#{?pane_title, #[fg=#a78bfa,bold]#{pane_title}#[default] ,}").Run()
+}
+
+// DisablePaneBorders turns off pane border titles (call when all agents are removed).
+func (d *Driver) DisablePaneBorders() error {
+	return exec.Command("tmux", "set-option", "-t", d.SessionName, "pane-border-status", "off").Run()
 }
 
 // PrintBanner prints a message in a pane using printf, escaping single quotes for safety.

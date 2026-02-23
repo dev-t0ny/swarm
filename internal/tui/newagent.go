@@ -201,6 +201,11 @@ func (a *App) handleAgentCreated(msg agentCreatedMsg) (tea.Model, tea.Cmd) {
 		return a, nil
 	}
 
+	// Enable pane borders when the first agent is created
+	if len(a.agents) == 0 {
+		_ = a.tmux.EnablePaneBorders()
+	}
+
 	a.agents = append(a.agents, msg.instance)
 	a.cursor = len(a.agents) - 1
 

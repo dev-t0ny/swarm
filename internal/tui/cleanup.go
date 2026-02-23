@@ -91,6 +91,9 @@ func (a *App) handleCleanupDone(msg cleanupDoneMsg) (tea.Model, tea.Cmd) {
 	a.ports.ReleaseAll()
 	a.nextAgentNum = 1
 
+	// Hide pane borders — back to single pane
+	_ = a.tmux.DisablePaneBorders()
+
 	if msg.err != nil {
 		a.statusMsg = fmt.Sprintf("Cleanup completed with warnings: %v", msg.err)
 	} else {

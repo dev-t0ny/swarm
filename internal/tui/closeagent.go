@@ -211,6 +211,11 @@ func (a *App) handleAgentClosed(msg agentClosedMsg) (tea.Model, tea.Cmd) {
 	a.screen = ScreenDashboard
 	a.closeAgent = newCloseAgentModel()
 
+	// Hide pane borders when no agents remain
+	if len(a.agents) == 0 {
+		_ = a.tmux.DisablePaneBorders()
+	}
+
 	// Fix cursor if it's now out of bounds
 	if a.cursor >= len(a.agents) && a.cursor > 0 {
 		a.cursor = len(a.agents) - 1
