@@ -196,6 +196,21 @@ func (d *Driver) KillPane(paneID string) error {
 	return exec.Command("tmux", "kill-pane", "-t", paneID).Run()
 }
 
+// LivePaneIDs returns the set of pane IDs currently alive in the session.
+func (d *Driver) LivePaneIDs() (map[string]bool, error) {
+	out, err := exec.Command("tmux", "list-panes", "-t", d.SessionName, "-F", "#{pane_id}").Output()
+	if err != nil {
+		return nil, err
+	}
+	ids := make(map[string]bool)
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line != "" {
+			ids[line] = true
+		}
+	}
+	return ids, nil
+}
+
 // KillSession kills the entire session.
 func (d *Driver) KillSession() error {
 	return exec.Command("tmux", "kill-session", "-t", d.SessionName).Run()
@@ -308,4 +323,30 @@ func (d *Driver) PrintBanner(paneID string, lines []string) error {
 		}
 	}
 	return d.RunInPane(paneID, "echo ''")
+}
+
+// --- Event-Driven Pane Death Detection ---
+
+// paneDeathSignal is the tmux wait-for channel name used for pane death notifications.
+const paneDeathSignal = "swarm-pane-died"
+
+// SetPaneDeathHook installs a tmux session hook that fires a signal whenever a pane is destroyed.
+// The hook triggers `tmux wait-for -S <signal>` on after-kill-pane, which unblocks WaitForPaneDeath.
+func (d *Driver) SetPaneDeathHook() error {
+	hookCmd := fmt.Sprintf("wait-for -S %s", paneDeathSignal)
+	return exec.Command("tmux", "set-hook", "-t", d.SessionName,
+		"after-kill-pane", hookCmd).Run()
+}
+
+// RemovePaneDeathHook removes the after-kill-pane hook. Call on shutdown.
+func (d *Driver) RemovePaneDeathHook() error {
+	// Unblock any goroutine waiting on the signal so it can exit cleanly.
+	_ = exec.Command("tmux", "wait-for", "-S", paneDeathSignal).Run()
+	return exec.Command("tmux", "set-hook", "-u", "-t", d.SessionName, "after-kill-pane").Run()
+}
+
+// WaitForPaneDeath blocks until a pane-death signal is received.
+// Returns an error if the session is gone or tmux fails.
+func (d *Driver) WaitForPaneDeath() error {
+	return exec.Command("tmux", "wait-for", paneDeathSignal).Run()
 }

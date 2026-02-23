@@ -42,6 +42,15 @@ type devServerStartedMsg struct {
 func (a *App) updateDevServer(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch a.devServer.state {
 	case devServerPicking:
+		// If no dev_command is configured, any key goes back
+		if a.cfg.DevCommand == "" {
+			if key.Matches(msg, a.keys.Back) || key.Matches(msg, a.keys.Focus) {
+				a.screen = ScreenDashboard
+				a.devServer = newDevServerModel()
+			}
+			return a, nil
+		}
+
 		switch {
 		case key.Matches(msg, a.keys.Up):
 			if a.devServer.cursor > 0 {
@@ -77,6 +86,7 @@ func (a *App) startDevServerCmd(agentName string, agentPaneID string, workDir st
 	tmuxDriver := a.tmux
 	ports := a.ports
 	swarmPaneID := a.swarmPaneID
+	devCmdTemplate := a.cfg.DevCommand
 
 	return func() tea.Msg {
 		// Allocate a port (thread-safe via mutex)
@@ -96,8 +106,8 @@ func (a *App) startDevServerCmd(agentName string, agentPaneID string, workDir st
 		devTitle := fmt.Sprintf("%s dev :%d", agentName, allocatedPort)
 		_ = tmuxDriver.SetPaneTitle(paneID, devTitle)
 
-		// Run the dev server command
-		devCmd := fmt.Sprintf("npm run dev -- --port %d", allocatedPort)
+		// Build the dev server command from config template
+		devCmd := strings.ReplaceAll(devCmdTemplate, "{port}", fmt.Sprintf("%d", allocatedPort))
 		if err := tmuxDriver.RunInPane(paneID, devCmd); err != nil {
 			ports.Release(allocatedPort)
 			_ = tmuxDriver.KillPane(paneID)
@@ -151,6 +161,21 @@ func (a *App) viewDevServerPicker() string {
 
 	b.WriteString(titleStyle.Render("Dev Server"))
 	b.WriteString("\n\n")
+
+	// If no dev_command is configured, show setup instructions
+	if a.cfg.DevCommand == "" {
+		b.WriteString(descStyle.Render("No dev_command configured."))
+		b.WriteString("\n\n")
+		b.WriteString(descStyle.Render("Add to .swarmrc:"))
+		b.WriteString("\n\n")
+		b.WriteString(keyStyle.Render("  dev_command: npm run dev -- --port {port}"))
+		b.WriteString("\n\n")
+		b.WriteString(descStyle.Render("Use {port} as a placeholder for the allocated port."))
+		b.WriteString("\n\n")
+		b.WriteString(renderKeyHint("esc", "back"))
+		return b.String()
+	}
+
 	b.WriteString(descStyle.Render("Select agent to attach dev server:"))
 	b.WriteString("\n\n")
 
