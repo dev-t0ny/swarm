@@ -103,11 +103,14 @@ func (a *App) doCloseApply(agent AgentInstance) agentClosedMsg {
 		baseBranch = "main"
 	}
 
-	// Construct the merge prompt
+	// Construct the merge prompt from config or default
 	mergePrompt := fmt.Sprintf(
 		"Merge your changes from branch %s into %s. Resolve any conflicts intelligently. Confirm when done.",
 		agent.Branch, baseBranch,
 	)
+	if cfgAgent, ok := a.cfg.Agents[agent.AgentType]; ok && cfgAgent.MergePrompt != "" {
+		mergePrompt = strings.ReplaceAll(cfgAgent.MergePrompt, "{base_branch}", baseBranch)
+	}
 
 	// Focus the agent's pane and send the merge instruction
 	_ = a.tmux.SelectPane(agent.PaneID)

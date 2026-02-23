@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/dev-t0ny/swarm/internal/config"
 	"github.com/dev-t0ny/swarm/internal/port"
 	"github.com/dev-t0ny/swarm/internal/tmux"
 )
@@ -75,16 +76,20 @@ type App struct {
 	newAgent   newAgentModel
 	devServer  devServerModel
 	closeAgent closeAgentModel
+	cleanup    cleanupModel
 
 	// Port allocator
 	ports *port.Allocator
+
+	// Config from .swarmrc
+	cfg *config.Config
 
 	// Error/status message
 	statusMsg string
 }
 
 // NewApp creates the root TUI application.
-func NewApp(repoRoot, repoName string, driver *tmux.Driver, swarmPaneID string) *App {
+func NewApp(repoRoot, repoName string, driver *tmux.Driver, swarmPaneID string, cfg *config.Config) *App {
 	return &App{
 		screen:       ScreenDashboard,
 		keys:         DefaultKeyMap(),
@@ -97,7 +102,9 @@ func NewApp(repoRoot, repoName string, driver *tmux.Driver, swarmPaneID string) 
 		newAgent:     newNewAgentModel(),
 		devServer:    newDevServerModel(),
 		closeAgent:   newCloseAgentModel(),
-		ports:        port.NewAllocator(3000),
+		cleanup:      newCleanupModel(),
+		ports:        port.NewAllocator(cfg.BasePort),
+		cfg:          cfg,
 	}
 }
 
@@ -123,6 +130,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a.handleDevServerStarted(msg)
 	case agentClosedMsg:
 		return a.handleAgentClosed(msg)
+	case cleanupDoneMsg:
+		return a.handleCleanupDone(msg)
 
 	case tea.KeyMsg:
 		// Global keys that work on any screen
@@ -153,6 +162,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a.updateDevServer(msg)
 		case ScreenCloseAgent:
 			return a.updateCloseAgent(msg)
+		case ScreenCleanup:
+			return a.updateCleanup(msg)
 		}
 	}
 
@@ -293,18 +304,13 @@ func (a *App) viewDashboard() string {
 	return b.String()
 }
 
-// viewCleanup is a placeholder — will be implemented in Phase 8.
-func (a *App) viewCleanup() string {
-	return dialogStyle.Render("Cleanup (coming soon)\n\nPress esc to go back")
-}
-
 func renderKeyHint(k, desc string) string {
 	return fmt.Sprintf("  %s %s\n", keyStyle.Render("["+k+"]"), descStyle.Render(desc))
 }
 
 // Run starts the TUI application.
-func Run(repoRoot, repoName string, driver *tmux.Driver, swarmPaneID string) error {
-	app := NewApp(repoRoot, repoName, driver, swarmPaneID)
+func Run(repoRoot, repoName string, driver *tmux.Driver, swarmPaneID string, cfg *config.Config) error {
+	app := NewApp(repoRoot, repoName, driver, swarmPaneID, cfg)
 	p := tea.NewProgram(app, tea.WithAltScreen())
 	_, err := p.Run()
 	return err

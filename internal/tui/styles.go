@@ -47,6 +47,9 @@ var (
 	warningStyle = lipgloss.NewStyle().
 			Foreground(warningColor)
 
+	dangerStyle = lipgloss.NewStyle().
+			Foreground(dangerColor)
+
 	statusBarStyle = lipgloss.NewStyle().
 			Foreground(mutedColor).
 			MarginTop(1)

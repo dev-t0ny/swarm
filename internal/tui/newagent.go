@@ -103,8 +103,8 @@ func (a *App) createAgentCmd(agentType agent.Type) tea.Cmd {
 			return agentCreatedMsg{err: fmt.Errorf("create worktree: %w", err)}
 		}
 
-		// 2. Symlink .env files
-		linker := link.NewLinker(a.repoRoot, []string{".env", ".env.local"})
+		// 2. Symlink configured files (.env, etc.)
+		linker := link.NewLinker(a.repoRoot, a.cfg.Symlinks)
 		linker.LinkTo(worktreePath)
 
 		// 3. Create tmux pane
@@ -152,7 +152,7 @@ func (a *App) createAgentCmd(agentType agent.Type) tea.Cmd {
 // installDepsCmd returns a tea.Cmd that runs npm install in a worktree.
 func (a *App) installDepsCmd(agentName string, worktreeDir string) tea.Cmd {
 	return func() tea.Msg {
-		installer := deps.NewInstaller("npm install")
+		installer := deps.NewInstaller(a.cfg.InstallCommand)
 		if installer.NeedsInstall(worktreeDir) {
 			_, err := installer.Install(worktreeDir)
 			return depsInstalledMsg{agentName: agentName, err: err}

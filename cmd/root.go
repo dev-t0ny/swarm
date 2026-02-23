@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/dev-t0ny/swarm/internal/config"
 	"github.com/dev-t0ny/swarm/internal/tmux"
 	"github.com/dev-t0ny/swarm/internal/tui"
 	"github.com/spf13/cobra"
@@ -55,8 +56,11 @@ func runSwarm(cmd *cobra.Command, args []string) error {
 	// Resize the swarm pane to be a sidebar (30 columns)
 	_ = driver.ResizePane(paneID, 34)
 
-	// Step 6: Launch the TUI
-	return tui.Run(repoRoot, repoName, driver, paneID)
+	// Step 6: Load config
+	cfg := config.Load(repoRoot)
+
+	// Step 7: Launch the TUI
+	return tui.Run(repoRoot, repoName, driver, paneID, cfg)
 }
 
 // bootstrapTmux creates a tmux session (or reattaches) and re-execs swarm inside it.
