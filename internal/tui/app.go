@@ -72,8 +72,9 @@ type App struct {
 	nextAgentNum int
 
 	// Sub-models for dialogs
-	newAgent  newAgentModel
-	devServer devServerModel
+	newAgent   newAgentModel
+	devServer  devServerModel
+	closeAgent closeAgentModel
 
 	// Port allocator
 	ports *port.Allocator
@@ -95,6 +96,7 @@ func NewApp(repoRoot, repoName string, driver *tmux.Driver, swarmPaneID string) 
 		nextAgentNum: 1,
 		newAgent:     newNewAgentModel(),
 		devServer:    newDevServerModel(),
+		closeAgent:   newCloseAgentModel(),
 		ports:        port.NewAllocator(3000),
 	}
 }
@@ -119,6 +121,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a.handleDepsInstalled(msg)
 	case devServerStartedMsg:
 		return a.handleDevServerStarted(msg)
+	case agentClosedMsg:
+		return a.handleAgentClosed(msg)
 
 	case tea.KeyMsg:
 		// Global keys that work on any screen
@@ -147,6 +151,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a.updateNewAgent(msg)
 		case ScreenDevServer:
 			return a.updateDevServer(msg)
+		case ScreenCloseAgent:
+			return a.updateCloseAgent(msg)
 		}
 	}
 
@@ -285,11 +291,6 @@ func (a *App) viewDashboard() string {
 	}
 
 	return b.String()
-}
-
-// viewCloseAgent is a placeholder — will be implemented in Phase 7.
-func (a *App) viewCloseAgent() string {
-	return dialogStyle.Render("Close Agent (coming soon)\n\nPress esc to go back")
 }
 
 // viewCleanup is a placeholder — will be implemented in Phase 8.
