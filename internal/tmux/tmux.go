@@ -16,6 +16,15 @@ type PaneInfo struct {
 	Active bool
 }
 
+// WindowInfo represents a tmux window (tab).
+type WindowInfo struct {
+	ID     string
+	Index  int
+	Name   string
+	Active bool
+	PaneID string // ID of the first/main pane in this window
+}
+
 // Driver provides methods to interact with tmux sessions and panes.
 type Driver struct {
 	SessionName string
@@ -52,7 +61,7 @@ func (d *Driver) SessionExists() bool {
 	return err == nil
 }
 
-// CreateSession creates a new tmux session and runs the given command in it.
+// CreateSession creates a new tmux session.
 // The session is created detached so we can attach to it after setup.
 func (d *Driver) CreateSession(workdir string) error {
 	cmd := exec.Command("tmux", "new-session", "-d", "-s", d.SessionName, "-c", workdir)
@@ -70,10 +79,75 @@ func (d *Driver) AttachSession() error {
 	return execSyscall(tmuxPath, []string{"tmux", "attach-session", "-t", d.SessionName}, os.Environ())
 }
 
-// SendKeys sends keystrokes to a specific pane.
-func (d *Driver) SendKeys(paneID string, keys string) error {
-	return exec.Command("tmux", "send-keys", "-t", paneID, keys, "Enter").Run()
+// --- Window (Tab) Management ---
+
+// NewWindow creates a new tmux window (tab) with the given name and working directory.
+// Returns the pane ID of the new window's pane.
+func (d *Driver) NewWindow(name string, workdir string) (string, error) {
+	args := []string{"new-window", "-t", d.SessionName, "-n", name, "-P", "-F", "#{pane_id}"}
+	if workdir != "" {
+		args = append(args, "-c", workdir)
+	}
+	out, err := exec.Command("tmux", args...).Output()
+	if err != nil {
+		return "", fmt.Errorf("new-window: %w", err)
+	}
+	return strings.TrimSpace(string(out)), nil
 }
+
+// SelectWindow switches to a window by its index (0-based).
+func (d *Driver) SelectWindow(index int) error {
+	target := fmt.Sprintf("%s:%d", d.SessionName, index)
+	return exec.Command("tmux", "select-window", "-t", target).Run()
+}
+
+// SelectWindowByName switches to a window by its name.
+func (d *Driver) SelectWindowByName(name string) error {
+	target := fmt.Sprintf("%s:%s", d.SessionName, name)
+	return exec.Command("tmux", "select-window", "-t", target).Run()
+}
+
+// KillWindow closes a tmux window (tab) and all its panes.
+func (d *Driver) KillWindow(windowID string) error {
+	return exec.Command("tmux", "kill-window", "-t", windowID).Run()
+}
+
+// RenameWindow renames a tmux window.
+func (d *Driver) RenameWindow(windowTarget string, name string) error {
+	return exec.Command("tmux", "rename-window", "-t", windowTarget, name).Run()
+}
+
+// ListWindows returns all windows in the session.
+func (d *Driver) ListWindows() ([]WindowInfo, error) {
+	format := "#{window_id}:#{window_index}:#{window_name}:#{window_active}:#{pane_id}"
+	out, err := exec.Command("tmux", "list-windows", "-t", d.SessionName, "-F", format).Output()
+	if err != nil {
+		return nil, fmt.Errorf("list-windows: %w", err)
+	}
+
+	var windows []WindowInfo
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, ":", 5)
+		if len(parts) != 5 {
+			continue
+		}
+		var idx int
+		fmt.Sscanf(parts[1], "%d", &idx)
+		windows = append(windows, WindowInfo{
+			ID:     parts[0],
+			Index:  idx,
+			Name:   parts[2],
+			Active: parts[3] == "1",
+			PaneID: parts[4],
+		})
+	}
+	return windows, nil
+}
+
+// --- Pane Management ---
 
 // SplitWindowH creates a horizontal split (new pane to the right) and returns the new pane ID.
 func (d *Driver) SplitWindowH(targetPane string, workdir string) (string, error) {
@@ -88,7 +162,18 @@ func (d *Driver) SplitWindowH(targetPane string, workdir string) (string, error)
 	return strings.TrimSpace(string(out)), nil
 }
 
-// SplitWindowV creates a vertical split (new pane below) and returns the new pane ID.
+// ApplyTiledLayout reflows all panes in the current window into an even grid.
+func (d *Driver) ApplyTiledLayout() error {
+	target := fmt.Sprintf("%s:0", d.SessionName)
+	return exec.Command("tmux", "select-layout", "-t", target, "tiled").Run()
+}
+
+// SendKeys sends keystrokes to a specific pane.
+func (d *Driver) SendKeys(paneID string, keys string) error {
+	return exec.Command("tmux", "send-keys", "-t", paneID, keys, "Enter").Run()
+}
+
+// SplitWindowV creates a vertical split (new pane below) within a window and returns the new pane ID.
 func (d *Driver) SplitWindowV(targetPane string, workdir string) (string, error) {
 	args := []string{"split-window", "-v", "-t", targetPane, "-P", "-F", "#{pane_id}"}
 	if workdir != "" {
@@ -99,16 +184,6 @@ func (d *Driver) SplitWindowV(targetPane string, workdir string) (string, error)
 		return "", fmt.Errorf("split-window vertical: %w", err)
 	}
 	return strings.TrimSpace(string(out)), nil
-}
-
-// ResizePane resizes a pane to the given width (in columns).
-func (d *Driver) ResizePane(paneID string, width int) error {
-	return exec.Command("tmux", "resize-pane", "-t", paneID, "-x", fmt.Sprintf("%d", width)).Run()
-}
-
-// ResizePaneY resizes a pane to the given height (in rows).
-func (d *Driver) ResizePaneY(paneID string, height int) error {
-	return exec.Command("tmux", "resize-pane", "-t", paneID, "-y", fmt.Sprintf("%d", height)).Run()
 }
 
 // SelectPane focuses a specific pane.
@@ -177,30 +252,52 @@ func (d *Driver) SetPaneTitle(paneID string, title string) error {
 	return exec.Command("tmux", "select-pane", "-t", paneID, "-T", title).Run()
 }
 
-// RenameWindow renames the tmux window.
-func (d *Driver) RenameWindow(name string) error {
-	return exec.Command("tmux", "rename-window", "-t", d.SessionName, name).Run()
-}
+// --- Session Styling ---
 
-// SetPaneBorderFormat enables pane border labels showing titles.
-func (d *Driver) EnablePaneTitles() error {
-	// Show pane titles in the border
-	if err := exec.Command("tmux", "set-option", "-t", d.SessionName, "pane-border-status", "top").Run(); err != nil {
-		return err
+// ConfigureSession sets up tmux styling: status bar, pane borders, and layout behavior.
+func (d *Driver) ConfigureSession() error {
+	opts := [][]string{
+		// Status bar
+		{"status-position", "bottom"},
+		{"status-style", "bg=#1a1b26,fg=#a9b1d6"},
+		{"status-left", " #[fg=#7c3aed,bold]swarm#[default] "},
+		{"status-left-length", "20"},
+		{"status-right", ""},
+		{"status-right-length", "0"},
+
+		// Pane borders
+		{"pane-border-style", "fg=#2a2e3f"},
+		{"pane-active-border-style", "fg=#7c3aed"},
+		// Only show title bar on panes that have a title set
+		{"pane-border-status", "top"},
+		{"pane-border-format", "#{?pane_title, #[fg=#a78bfa,bold]#{pane_title}#[default] ,}"},
+		{"pane-border-lines", "single"},
+
+		// Mouse support — click to focus panes
+		{"mouse", "on"},
+
+		// Don't auto-rename windows
+		{"allow-rename", "off"},
+		{"automatic-rename", "off"},
 	}
-	// Format: show the pane title
-	return exec.Command("tmux", "set-option", "-t", d.SessionName, "pane-border-format", " #{pane_title} ").Run()
+
+	for _, opt := range opts {
+		if err := exec.Command("tmux", "set-option", "-t", d.SessionName, opt[0], opt[1]).Run(); err != nil {
+			return fmt.Errorf("set-option %s: %w", opt[0], err)
+		}
+	}
+
+	return nil
 }
 
-// SendText sends raw text to a pane without pressing Enter.
-func (d *Driver) SendText(paneID string, text string) error {
-	return exec.Command("tmux", "send-keys", "-t", paneID, "-l", text).Run()
+// UpdateStatusRight updates the right side of the status bar dynamically.
+func (d *Driver) UpdateStatusRight(text string) error {
+	return exec.Command("tmux", "set-option", "-t", d.SessionName, "status-right", text).Run()
 }
 
 // PrintBanner prints a message in a pane using printf, escaping single quotes for safety.
 func (d *Driver) PrintBanner(paneID string, lines []string) error {
 	for _, line := range lines {
-		// Escape single quotes: replace ' with '\''
 		escaped := strings.ReplaceAll(line, "'", "'\\''")
 		cmd := fmt.Sprintf("printf '%%s\\n' '%s'", escaped)
 		if err := d.RunInPane(paneID, cmd); err != nil {

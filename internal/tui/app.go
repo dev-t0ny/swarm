@@ -52,8 +52,8 @@ type AgentInstance struct {
 	AgentType  string // claude, opencode, codex, shell
 	Branch     string
 	WorkDir    string
-	PaneID     string
-	DevPaneID  string // pane ID for dev server, if any
+	PaneID     string // tmux pane ID for this agent
+	DevPaneID  string // pane ID for dev server split, if any
 	DevPort    int
 	Status     AgentStatus
 	installCmd string // cached install command from config
@@ -137,6 +137,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		// Global keys that work on any screen
 		if key.Matches(msg, a.keys.Quit) {
+			// Kill all agent panes before exiting
+			for _, ag := range a.agents {
+				if ag.DevPaneID != "" {
+					_ = a.tmux.KillPane(ag.DevPaneID)
+				}
+				_ = a.tmux.KillPane(ag.PaneID)
+			}
 			return a, tea.Quit
 		}
 
@@ -173,6 +180,16 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // updateDashboard handles key events on the dashboard screen.
 func (a *App) updateDashboard(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Number keys 1-9 to select an agent in the list
+	k := msg.String()
+	if len(k) == 1 && k[0] >= '1' && k[0] <= '9' {
+		idx := int(k[0] - '1')
+		if idx < len(a.agents) {
+			a.cursor = idx
+		}
+		return a, nil
+	}
+
 	switch {
 	case key.Matches(msg, a.keys.Up):
 		if a.cursor > 0 {
@@ -185,11 +202,6 @@ func (a *App) updateDashboard(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, a.keys.NewAgent):
 		a.screen = ScreenNewAgent
 		a.newAgent = newNewAgentModel()
-	case key.Matches(msg, a.keys.Focus):
-		if len(a.agents) > 0 {
-			agent := a.agents[a.cursor]
-			_ = a.tmux.SelectPane(agent.PaneID)
-		}
 	case key.Matches(msg, a.keys.Close):
 		if len(a.agents) > 0 {
 			a.screen = ScreenCloseAgent
@@ -208,105 +220,165 @@ func (a *App) updateDashboard(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // View implements tea.Model.
 func (a *App) View() string {
-	switch a.screen {
-	case ScreenDashboard:
-		return a.viewDashboard()
-	case ScreenNewAgent:
-		return a.viewNewAgent()
-	case ScreenCloseAgent:
-		return a.viewCloseAgent()
-	case ScreenDevServer:
-		return a.viewDevServer()
-	case ScreenCleanup:
-		return a.viewCleanup()
-	default:
-		return a.viewDashboard()
+	w := a.width
+	h := a.height
+	if w <= 0 {
+		w = 80
 	}
+	if h <= 0 {
+		h = 24
+	}
+
+	// Empty dashboard handles its own centering + background
+	if a.screen == ScreenDashboard && len(a.agents) == 0 {
+		return a.viewDashboardEmpty(w, h)
+	}
+
+	// Dashboard renders normally (top-left aligned)
+	if a.screen == ScreenDashboard {
+		return lipgloss.Place(w, h,
+			lipgloss.Left, lipgloss.Top,
+			a.viewDashboardActive(w),
+		)
+	}
+
+	// All other screens render as centered modals
+	var inner string
+	switch a.screen {
+	case ScreenNewAgent:
+		inner = a.viewNewAgent()
+	case ScreenCloseAgent:
+		inner = a.viewCloseAgent()
+	case ScreenDevServer:
+		inner = a.viewDevServer()
+	case ScreenCleanup:
+		inner = a.viewCleanup()
+	default:
+		inner = a.viewDashboardActive(w)
+	}
+
+	modal := modalStyle.Render(inner)
+	return lipgloss.Place(w, h,
+		lipgloss.Center, lipgloss.Center,
+		modal,
+	)
 }
 
-// viewDashboard renders the main dashboard.
-func (a *App) viewDashboard() string {
+// viewDashboardEmpty renders a centered welcome screen.
+func (a *App) viewDashboardEmpty(w, h int) string {
 	var b strings.Builder
 
-	// Title
-	b.WriteString(titleStyle.Render("swarm"))
+	b.WriteString(logoStyle.Render(logo))
 	b.WriteString("\n")
-
-	// Repo info
-	b.WriteString(descStyle.Render(a.repoName))
+	b.WriteString(subtitleStyle.Render("parallel AI agent workspace"))
 	b.WriteString("\n\n")
 
-	// Agents section
-	b.WriteString(sectionStyle.Render("Agents"))
-	b.WriteString("\n")
+	b.WriteString(descStyle.Render("No agents running"))
+	b.WriteString("\n\n")
 
-	if len(a.agents) == 0 {
-		b.WriteString(descStyle.Render("  No agents running"))
-		b.WriteString("\n")
-		b.WriteString(descStyle.Render("  Press 'n' to create one"))
-		b.WriteString("\n")
-	} else {
-		for i, agent := range a.agents {
-			// Status indicator
-			var indicator string
-			var nameStyle lipgloss.Style
-			switch agent.Status {
-			case AgentRunning:
-				indicator = activeAgentStyle.Render("●")
-				nameStyle = activeAgentStyle
-			case AgentMerging:
-				indicator = mergingAgentStyle.Render("◐")
-				nameStyle = mergingAgentStyle
-			case AgentIdle:
-				indicator = idleAgentStyle.Render("○")
-				nameStyle = idleAgentStyle
-			}
-
-			var line string
-			if i == a.cursor {
-				line = selectedStyle.Render(fmt.Sprintf(" %s %s %s", "●", agent.Name, agent.AgentType))
-			} else {
-				line = fmt.Sprintf("  %s %s %s", indicator, nameStyle.Render(agent.Name), descStyle.Render(agent.AgentType))
-			}
-
-			b.WriteString(line)
-
-			// Show dev server port if running
-			if agent.DevPaneID != "" {
-				b.WriteString(descStyle.Render(fmt.Sprintf(" :%d", agent.DevPort)))
-			}
-
-			b.WriteString("\n")
-		}
-	}
-
-	b.WriteString("\n")
-
-	// Keybinding hints
-	b.WriteString(renderKeyHint("n", "new agent"))
-	if len(a.agents) > 0 {
-		b.WriteString(renderKeyHint("enter", "focus"))
-		b.WriteString(renderKeyHint("d", "dev server"))
-		b.WriteString(renderKeyHint("x", "close"))
-		b.WriteString(renderKeyHint("C", "cleanup all"))
-	}
-	b.WriteString(renderKeyHint("q", "quit"))
-
-	// Tmux navigation hint
-	if len(a.agents) > 0 {
-		b.WriteString("\n")
-		b.WriteString(descStyle.Render("  Ctrl-b ; to return here"))
-		b.WriteString("\n")
-	}
-
-	// Status bar
-	b.WriteString("\n")
-	b.WriteString(statusBarStyle.Render(fmt.Sprintf("Agents: %d", len(a.agents))))
+	b.WriteString(fmt.Sprintf("%s %s\n", keyStyle.Render("[n]"), descStyle.Render("new agent")))
+	b.WriteString(fmt.Sprintf("%s %s\n", keyStyle.Render("[q]"), descStyle.Render("quit")))
 
 	// Status message
 	if a.statusMsg != "" {
 		b.WriteString("\n")
 		b.WriteString(warningStyle.Render(a.statusMsg))
+	}
+
+	// Center everything
+	return lipgloss.Place(w, h,
+		lipgloss.Center, lipgloss.Center,
+		b.String(),
+	)
+}
+
+// viewDashboardActive renders the dashboard with the agent list.
+func (a *App) viewDashboardActive(w int) string {
+	var b strings.Builder
+
+	sepW := w - 4
+	if sepW > 50 {
+		sepW = 50
+	}
+	if sepW < 20 {
+		sepW = 20
+	}
+
+	// Header — compact, one line
+	header := fmt.Sprintf("  %s %s %s  %s",
+		keyStyle.Render("swarm"),
+		separatorStyle.Render("─"),
+		descStyle.Render(a.repoName),
+		descStyle.Render(fmt.Sprintf("%d agent(s)", len(a.agents))),
+	)
+	b.WriteString(header)
+	b.WriteString("\n\n")
+
+	// Agent list
+	for i, ag := range a.agents {
+		// Number badge
+		tabNum := fmt.Sprintf("%d", i+1)
+		var badge string
+		if i == a.cursor {
+			badge = badgeStyle.Render(tabNum)
+		} else {
+			badge = badgeInactiveStyle.Render(tabNum)
+		}
+
+		// Status indicator
+		var indicator string
+		switch ag.Status {
+		case AgentRunning:
+			indicator = activeAgentStyle.Render("●")
+		case AgentMerging:
+			indicator = mergingAgentStyle.Render("◐")
+		case AgentIdle:
+			indicator = idleAgentStyle.Render("○")
+		}
+
+		// Agent name + type
+		var nameStr string
+		if i == a.cursor {
+			nameStr = fmt.Sprintf("%s  %s", keyStyle.Render(ag.Name), descStyle.Render(ag.AgentType))
+		} else {
+			nameStr = fmt.Sprintf("%s  %s", descStyle.Render(ag.Name), dimStyle.Render(ag.AgentType))
+		}
+
+		b.WriteString(fmt.Sprintf("  %s %s %s", badge, indicator, nameStr))
+
+		// Branch
+		b.WriteString(branchStyle.Render(fmt.Sprintf("  %s", ag.Branch)))
+
+		// Port
+		if ag.DevPaneID != "" {
+			b.WriteString(portStyle.Render(fmt.Sprintf("  :%d", ag.DevPort)))
+		}
+
+		b.WriteString("\n")
+	}
+
+	b.WriteString("\n  ")
+	b.WriteString(separator(sepW))
+	b.WriteString("\n\n")
+
+	// Keybinding hints — compact two-column layout
+	b.WriteString(fmt.Sprintf("  %s %-12s %s %s\n",
+		keyStyle.Render("[n]"), "new",
+		keyStyle.Render("[x]"), "close"))
+	b.WriteString(fmt.Sprintf("  %s %-12s %s %s\n",
+		keyStyle.Render("[d]"), "dev server",
+		keyStyle.Render("[C]"), "cleanup all"))
+	b.WriteString(fmt.Sprintf("  %s %-12s %s %s\n",
+		keyStyle.Render("[1-9]"), "select",
+		keyStyle.Render("[q]"), "quit"))
+
+	b.WriteString("\n")
+	b.WriteString(dimStyle.Render("  click a pane to interact with it"))
+
+	// Status message
+	if a.statusMsg != "" {
+		b.WriteString("\n\n")
+		b.WriteString(warningStyle.Render("  " + a.statusMsg))
 	}
 
 	return b.String()

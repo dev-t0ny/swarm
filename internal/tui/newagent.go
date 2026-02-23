@@ -105,8 +105,8 @@ func (a *App) createAgentCmd(agentType agent.Type) tea.Cmd {
 	agentName := fmt.Sprintf("agent-%d", a.nextAgentNum)
 	repoRoot := a.repoRoot
 	symlinks := a.cfg.Symlinks
-	swarmPaneID := a.swarmPaneID
 	tmuxDriver := a.tmux
+	swarmPaneID := a.swarmPaneID
 	installCmd := a.cfg.InstallCommand
 
 	// Pre-increment to avoid race if user creates multiple agents rapidly.
@@ -134,45 +134,45 @@ func (a *App) createAgentCmd(agentType agent.Type) tea.Cmd {
 			}
 		}
 
-		// 3. Create tmux pane
+		// 3. Create a new pane by splitting from the swarm control pane
 		paneID, err := tmuxDriver.SplitWindowH(swarmPaneID, worktreePath)
 		if err != nil {
-			// Rollback: clean up orphaned worktree
 			_ = gitMgr.RemoveWorktree(agentName, true)
 			return agentCreatedMsg{err: fmt.Errorf("create tmux pane: %w", err)}
 		}
 
-		// 4. Label the pane so it's clear which worktree it belongs to
-		paneTitle := fmt.Sprintf("%s (%s) %s", agentName, agentType.Name, branchName)
+		// 4. Apply tiled layout so all panes form a grid
+		_ = tmuxDriver.ApplyTiledLayout()
+
+		// 5. Label the pane
+		paneTitle := fmt.Sprintf("%s  %s  %s", agentName, agentType.Name, branchName)
 		_ = tmuxDriver.SetPaneTitle(paneID, paneTitle)
 
-		// Enable pane border titles on first agent creation
-		_ = tmuxDriver.EnablePaneTitles()
-		// Also title the swarm control pane
-		_ = tmuxDriver.SetPaneTitle(swarmPaneID, "swarm")
-
-		// 5. Print a banner in the pane showing context
+		// 6. Print a banner in the pane showing context
 		_ = tmuxDriver.PrintBanner(paneID, []string{
-			fmt.Sprintf("=== %s ===", agentName),
+			fmt.Sprintf("  %s", agentName),
 			fmt.Sprintf("  Agent:    %s", agentType.Name),
 			fmt.Sprintf("  Branch:   %s", branchName),
 			fmt.Sprintf("  Worktree: %s", worktreePath),
-			"===",
+			"",
 		})
 
-		// 6. Launch agent in the pane (if not shell)
+		// 7. Launch agent in the pane (if not shell)
 		if agentType.Command != "" {
 			_ = tmuxDriver.RunInPane(paneID, agentType.Command)
 		}
 
+		// 8. Refocus the swarm control pane so the TUI stays active
+		_ = tmuxDriver.SelectPane(swarmPaneID)
+
 		instance := AgentInstance{
-			Name:         agentName,
-			AgentType:    agentType.Name,
-			Branch:       branchName,
-			WorkDir:      worktreePath,
-			PaneID:       paneID,
-			Status:       AgentRunning,
-			installCmd:   installCmd,
+			Name:       agentName,
+			AgentType:  agentType.Name,
+			Branch:     branchName,
+			WorkDir:    worktreePath,
+			PaneID:     paneID,
+			Status:     AgentRunning,
+			installCmd: installCmd,
 		}
 
 		return agentCreatedMsg{instance: instance, linkErrors: linkErrors}

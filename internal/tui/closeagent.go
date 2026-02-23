@@ -86,6 +86,7 @@ func (a *App) closeAgentCmd(action closeAction) tea.Cmd {
 	agentInst := a.agents[a.cursor]
 	repoRoot := a.repoRoot
 	tmuxDriver := a.tmux
+	swarmPaneID := a.swarmPaneID
 	ports := a.ports
 	cfgAgents := a.cfg.Agents
 
@@ -94,9 +95,9 @@ func (a *App) closeAgentCmd(action closeAction) tea.Cmd {
 		case closeApply:
 			return doCloseApply(agentInst, repoRoot, tmuxDriver, cfgAgents)
 		case closeKeep:
-			return doCloseKeep(agentInst, tmuxDriver, ports)
+			return doCloseKeep(agentInst, tmuxDriver, swarmPaneID, ports)
 		case closeDrop:
-			return doCloseDrop(agentInst, repoRoot, tmuxDriver, ports)
+			return doCloseDrop(agentInst, repoRoot, tmuxDriver, swarmPaneID, ports)
 		}
 		return agentClosedMsg{agentName: agentInst.Name, action: action}
 	}
@@ -130,9 +131,9 @@ func doCloseApply(agentInst AgentInstance, repoRoot string, tmuxDriver *tmux.Dri
 	}
 }
 
-// doCloseKeep kills the pane but preserves the worktree and branch.
-func doCloseKeep(agentInst AgentInstance, tmuxDriver *tmux.Driver, ports *port.Allocator) agentClosedMsg {
-	// Kill dev server pane if running
+// doCloseKeep kills the agent pane but preserves the worktree and branch.
+func doCloseKeep(agentInst AgentInstance, tmuxDriver *tmux.Driver, swarmPaneID string, ports *port.Allocator) agentClosedMsg {
+	// Release allocated port if dev server was running
 	if agentInst.DevPaneID != "" {
 		_ = tmuxDriver.KillPane(agentInst.DevPaneID)
 		ports.ReleaseByAgent(agentInst.Name)
@@ -140,6 +141,10 @@ func doCloseKeep(agentInst AgentInstance, tmuxDriver *tmux.Driver, ports *port.A
 
 	// Kill the agent pane
 	_ = tmuxDriver.KillPane(agentInst.PaneID)
+
+	// Reflow the grid and refocus control pane
+	_ = tmuxDriver.ApplyTiledLayout()
+	_ = tmuxDriver.SelectPane(swarmPaneID)
 
 	return agentClosedMsg{
 		agentName: agentInst.Name,
@@ -148,8 +153,8 @@ func doCloseKeep(agentInst AgentInstance, tmuxDriver *tmux.Driver, ports *port.A
 }
 
 // doCloseDrop kills everything and deletes the worktree and branch.
-func doCloseDrop(agentInst AgentInstance, repoRoot string, tmuxDriver *tmux.Driver, ports *port.Allocator) agentClosedMsg {
-	// Kill dev server pane if running
+func doCloseDrop(agentInst AgentInstance, repoRoot string, tmuxDriver *tmux.Driver, swarmPaneID string, ports *port.Allocator) agentClosedMsg {
+	// Release allocated port if dev server was running
 	if agentInst.DevPaneID != "" {
 		_ = tmuxDriver.KillPane(agentInst.DevPaneID)
 		ports.ReleaseByAgent(agentInst.Name)
@@ -157,6 +162,10 @@ func doCloseDrop(agentInst AgentInstance, repoRoot string, tmuxDriver *tmux.Driv
 
 	// Kill the agent pane
 	_ = tmuxDriver.KillPane(agentInst.PaneID)
+
+	// Reflow the grid and refocus control pane
+	_ = tmuxDriver.ApplyTiledLayout()
+	_ = tmuxDriver.SelectPane(swarmPaneID)
 
 	// Remove the worktree and delete the branch
 	gitMgr := gitpkg.NewManager(repoRoot)
@@ -223,8 +232,8 @@ func (a *App) removeAgent(name string) {
 // viewCloseAgent renders the close agent dialog.
 func (a *App) viewCloseAgent() string {
 	if a.cursor >= len(a.agents) {
-		// Shouldn't happen — guard against it by showing dashboard
-		return a.viewDashboard()
+		// Shouldn't happen — guard against it
+		return ""
 	}
 
 	agent := a.agents[a.cursor]

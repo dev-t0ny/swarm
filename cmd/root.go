@@ -47,20 +47,26 @@ func runSwarm(cmd *cobra.Command, args []string) error {
 		return bootstrapTmux(driver, repoRoot)
 	}
 
-	// Step 5: We're inside tmux — get our pane ID and resize to sidebar width
+	// Step 5: We're inside tmux — get our pane ID
 	paneID, err := tmux.GetCurrentPaneID()
 	if err != nil {
 		return fmt.Errorf("failed to get current pane ID: %w", err)
 	}
 
-	// Resize the swarm pane to be a sidebar (30 columns)
-	_ = driver.ResizePane(paneID, 34)
+	// Step 6: Configure tmux styling (borders, status bar, pane titles)
+	_ = driver.ConfigureSession()
+	_ = driver.SetPaneTitle(paneID, "")
 
-	// Step 6: Load config
+	// Step 7: Load config
 	cfg := config.Load(repoRoot)
 
-	// Step 7: Launch the TUI
-	return tui.Run(repoRoot, repoName, driver, paneID, cfg)
+	// Step 8: Launch the TUI
+	err = tui.Run(repoRoot, repoName, driver, paneID, cfg)
+
+	// Step 9: TUI exited — kill the tmux session to drop back to the normal terminal
+	_ = driver.KillSession()
+
+	return err
 }
 
 // bootstrapTmux creates a tmux session (or reattaches) and re-execs swarm inside it.

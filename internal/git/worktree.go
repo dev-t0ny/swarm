@@ -84,6 +84,19 @@ func (m *Manager) HasCommits() bool {
 	return err == nil
 }
 
+// BranchExists checks if a local branch exists.
+func (m *Manager) BranchExists(branchName string) bool {
+	err := exec.Command("git", "-C", m.RepoRoot, "show-ref", "--verify", "--quiet", "refs/heads/"+branchName).Run()
+	return err == nil
+}
+
+// WorktreeExists checks if a worktree directory already exists.
+func (m *Manager) WorktreeExists(name string) bool {
+	worktreePath := filepath.Join(m.SwarmDir, name)
+	info, err := os.Stat(worktreePath)
+	return err == nil && info.IsDir()
+}
+
 // CreateWorktree creates a new git worktree with a new branch.
 // Returns the absolute path to the created worktree and the branch name.
 func (m *Manager) CreateWorktree(name string, baseBranch string) (string, string, error) {
@@ -102,6 +115,22 @@ func (m *Manager) CreateWorktree(name string, baseBranch string) (string, string
 			return "", "", fmt.Errorf("get current branch: %w", err)
 		}
 		baseBranch = strings.TrimSpace(string(out))
+	}
+
+	// If the branch already exists, clean it up first
+	if m.BranchExists(branchName) {
+		// Remove any existing worktree that uses this branch
+		if m.WorktreeExists(name) {
+			_ = m.RemoveWorktree(name, false)
+		}
+		// Delete the stale branch
+		_ = exec.Command("git", "-C", m.RepoRoot, "branch", "-D", branchName).Run()
+		// Prune any stale worktree references
+		_ = exec.Command("git", "-C", m.RepoRoot, "worktree", "prune").Run()
+	} else if m.WorktreeExists(name) {
+		// Worktree dir exists but branch doesn't — orphaned directory
+		_ = os.RemoveAll(worktreePath)
+		_ = exec.Command("git", "-C", m.RepoRoot, "worktree", "prune").Run()
 	}
 
 	// Create the worktree with a new branch

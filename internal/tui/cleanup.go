@@ -61,15 +61,19 @@ func (a *App) cleanupAllCmd() tea.Cmd {
 	copy(agents, a.agents)
 	repoRoot := a.repoRoot
 	tmuxDriver := a.tmux
+	swarmPaneID := a.swarmPaneID
 
 	return func() tea.Msg {
-		// Kill all agent panes and dev server panes
+		// Kill all agent panes (and their dev server panes)
 		for _, ag := range agents {
 			if ag.DevPaneID != "" {
 				_ = tmuxDriver.KillPane(ag.DevPaneID)
 			}
 			_ = tmuxDriver.KillPane(ag.PaneID)
 		}
+
+		// Refocus control pane (only pane left)
+		_ = tmuxDriver.SelectPane(swarmPaneID)
 
 		// Remove all worktrees and branches
 		gitMgr := gitpkg.NewManager(repoRoot)
@@ -117,7 +121,7 @@ func (a *App) viewCleanupConfirm() string {
 	// Show what will be destroyed
 	b.WriteString(warningStyle.Render("  This will:"))
 	b.WriteString("\n")
-	b.WriteString(fmt.Sprintf("  %s Kill %d agent pane(s)\n", dangerStyle.Render("*"), len(a.agents)))
+	b.WriteString(fmt.Sprintf("  %s Kill %d agent(s)\n", dangerStyle.Render("*"), len(a.agents)))
 
 	devCount := 0
 	for _, agent := range a.agents {

@@ -71,10 +71,12 @@ func (a *App) updateDevServer(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // startDevServerCmd returns a tea.Cmd that starts a dev server for an agent.
+// The dev server runs in a vertical split within the agent's window (agent on top, server on bottom).
 // Captures immutable references before the closure.
 func (a *App) startDevServerCmd(agentName string, agentPaneID string, workDir string) tea.Cmd {
 	tmuxDriver := a.tmux
 	ports := a.ports
+	swarmPaneID := a.swarmPaneID
 
 	return func() tea.Msg {
 		// Allocate a port (thread-safe via mutex)
@@ -83,7 +85,7 @@ func (a *App) startDevServerCmd(agentName string, agentPaneID string, workDir st
 			return devServerStartedMsg{agentName: agentName, err: err}
 		}
 
-		// Create a new pane below the agent's pane
+		// Create a vertical split below the agent's pane
 		paneID, err := tmuxDriver.SplitWindowV(agentPaneID, workDir)
 		if err != nil {
 			ports.Release(allocatedPort)
@@ -101,6 +103,9 @@ func (a *App) startDevServerCmd(agentName string, agentPaneID string, workDir st
 			_ = tmuxDriver.KillPane(paneID)
 			return devServerStartedMsg{agentName: agentName, err: fmt.Errorf("start dev server: %w", err)}
 		}
+
+		// Refocus the swarm control pane so the TUI stays active
+		_ = tmuxDriver.SelectPane(swarmPaneID)
 
 		return devServerStartedMsg{
 			agentName: agentName,
