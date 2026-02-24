@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -110,15 +111,14 @@ func (s AgentStatus) String() string {
 
 // AgentInstance represents a running agent in a worktree.
 type AgentInstance struct {
-	Name       string
-	AgentType  string // claude, opencode, codex, shell
-	Branch     string
-	WorkDir    string
-	PaneID     string // tmux pane ID for this agent
-	DevPaneID  string // pane ID for dev server split, if any
-	DevPort    int
-	Status     AgentStatus
-	installCmd string // cached install command from config
+	Name      string
+	AgentType string // claude, opencode, codex, shell
+	Branch    string
+	WorkDir   string
+	PaneID    string // tmux pane ID for this agent
+	DevPaneID string // pane ID for dev server split, if any
+	DevPort   int
+	Status    AgentStatus
 }
 
 // App is the root bubbletea model.
@@ -197,14 +197,16 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Handle async messages from any screen
 	case agentCreatedMsg:
 		return a.handleAgentCreated(msg)
-	case depsInstalledMsg:
-		return a.handleDepsInstalled(msg)
 	case devServerStartedMsg:
 		return a.handleDevServerStarted(msg)
 	case agentClosedMsg:
 		return a.handleAgentClosed(msg)
 	case cleanupDoneMsg:
 		return a.handleCleanupDone(msg)
+
+	// Spinner ticks — forward to the active screen's spinner
+	case spinner.TickMsg:
+		return a.updateSpinner(msg)
 
 	case tea.KeyMsg:
 		// Global keys that work on any screen
@@ -226,7 +228,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Back key returns to dashboard from any sub-screen
 		// (but only if we're not in the middle of an async operation)
 		if key.Matches(msg, a.keys.Back) && a.screen != ScreenDashboard {
-			if a.screen == ScreenNewAgent && (a.newAgent.state == newAgentCreating || a.newAgent.state == newAgentInstalling) {
+			if a.screen == ScreenNewAgent && a.newAgent.state == newAgentCreating {
 				// Don't allow back during creation
 				return a, nil
 			}
@@ -352,8 +354,7 @@ func (a *App) viewDashboardEmpty(w, h int) string {
 	b.WriteString(descStyle.Render("No agents running"))
 	b.WriteString("\n\n")
 
-	b.WriteString(fmt.Sprintf("%s %s\n", keyStyle.Render("[n]"), descStyle.Render("new agent")))
-	b.WriteString(fmt.Sprintf("%s %s\n", keyStyle.Render("[q]"), descStyle.Render("quit")))
+	b.WriteString(hintBar("n", "new agent", "q", "quit"))
 
 	// Status message
 	if a.statusMsg != "" {
@@ -442,19 +443,8 @@ func (a *App) viewDashboardActive(w int) string {
 	b.WriteString(separator(sepW))
 	b.WriteString("\n\n")
 
-	// Keybinding hints — compact two-column layout
-	b.WriteString(fmt.Sprintf("  %s %-12s %s %s\n",
-		keyStyle.Render("[n]"), "new",
-		keyStyle.Render("[x]"), "close"))
-	b.WriteString(fmt.Sprintf("  %s %-12s %s %s\n",
-		keyStyle.Render("[d]"), "dev server",
-		keyStyle.Render("[C]"), "cleanup all"))
-	b.WriteString(fmt.Sprintf("  %s %-12s %s %s\n",
-		keyStyle.Render("[1-9]"), "select",
-		keyStyle.Render("[q]"), "quit"))
-
-	b.WriteString("\n")
-	b.WriteString(dimStyle.Render("  click a pane to interact with it"))
+	b.WriteString("  ")
+	b.WriteString(hintBar("n", "new", "d", "dev", "x", "close", "C", "cleanup", "q", "quit"))
 
 	// Status message
 	if a.statusMsg != "" {
@@ -499,8 +489,29 @@ func (a *App) handleHealthCheck(msg healthCheckMsg) (tea.Model, tea.Cmd) {
 	return a, nil
 }
 
-func renderKeyHint(k, desc string) string {
-	return fmt.Sprintf("  %s %s\n", keyStyle.Render("["+k+"]"), descStyle.Render(desc))
+// updateSpinner forwards spinner tick messages to the active screen's spinner.
+func (a *App) updateSpinner(msg spinner.TickMsg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+	switch a.screen {
+	case ScreenNewAgent:
+		a.newAgent.spinner, cmd = a.newAgent.spinner.Update(msg)
+	case ScreenDevServer:
+		a.devServer.spinner, cmd = a.devServer.spinner.Update(msg)
+	case ScreenCleanup:
+		a.cleanup.spinner, cmd = a.cleanup.spinner.Update(msg)
+	}
+	return a, cmd
+}
+
+// hintBar renders a dot-separated inline keybind bar.
+// Takes alternating key/description pairs: "n", "new", "d", "dev", ...
+func hintBar(pairs ...string) string {
+	dot := dimStyle.Render(" · ")
+	var parts []string
+	for i := 0; i+1 < len(pairs); i += 2 {
+		parts = append(parts, keyStyle.Render(pairs[i])+" "+descStyle.Render(pairs[i+1]))
+	}
+	return strings.Join(parts, dot)
 }
 
 // Run starts the TUI application.

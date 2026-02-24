@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -21,11 +22,13 @@ type devServerModel struct {
 	cursor  int
 	state   devServerState
 	message string
+	spinner spinner.Model
 }
 
 func newDevServerModel() devServerModel {
 	return devServerModel{
-		state: devServerPicking,
+		state:   devServerPicking,
+		spinner: newSwarmSpinner(),
 	}
 }
 
@@ -70,7 +73,7 @@ func (a *App) updateDevServer(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			a.devServer.state = devServerStarting
 			a.devServer.message = fmt.Sprintf("Starting dev server for %s...", agent.Name)
-			return a, a.startDevServerCmd(agent.Name, agent.PaneID, agent.WorkDir)
+			return a, tea.Batch(a.devServer.spinner.Tick, a.startDevServerCmd(agent.Name, agent.PaneID, agent.WorkDir))
 		case key.Matches(msg, a.keys.Back):
 			a.screen = ScreenDashboard
 			a.devServer = newDevServerModel()
@@ -172,7 +175,9 @@ func (a *App) viewDevServerPicker() string {
 		b.WriteString("\n\n")
 		b.WriteString(descStyle.Render("Use {port} as a placeholder for the allocated port."))
 		b.WriteString("\n\n")
-		b.WriteString(renderKeyHint("esc", "back"))
+		b.WriteString("  ")
+		b.WriteString(hintBar("esc", "back"))
+		b.WriteString("\n")
 		return b.String()
 	}
 
@@ -197,8 +202,9 @@ func (a *App) viewDevServerPicker() string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(renderKeyHint("enter", "start"))
-	b.WriteString(renderKeyHint("esc", "cancel"))
+	b.WriteString("  ")
+	b.WriteString(hintBar("enter", "start", "esc", "cancel"))
+	b.WriteString("\n")
 
 	return b.String()
 }
@@ -209,8 +215,7 @@ func (a *App) viewDevServerProgress() string {
 	b.WriteString(titleStyle.Render("Dev Server"))
 	b.WriteString("\n\n")
 
-	icon := warningStyle.Render("◐")
-	b.WriteString(fmt.Sprintf("  %s %s", icon, a.devServer.message))
+	b.WriteString(fmt.Sprintf("  %s %s", a.devServer.spinner.View(), descStyle.Render(a.devServer.message)))
 	b.WriteString("\n")
 
 	return b.String()

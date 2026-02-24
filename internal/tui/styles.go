@@ -2,7 +2,9 @@ package tui
 
 import (
 	"strings"
+	"time"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -116,7 +118,22 @@ var (
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(primaryColor).
 			Padding(1, 3)
+
+	// Custom spinner — braille starburst, fast and edgy
+	swarmSpinner = spinner.Spinner{
+		Frames: []string{"⣼", "⣹", "⢻", "⠿", "⡟", "⣏", "⣧", "⣶"},
+		FPS:    time.Second / 12,
+	}
 )
+
+// newSwarmSpinner creates a styled spinner instance.
+func newSwarmSpinner() spinner.Model {
+	s := spinner.New(
+		spinner.WithSpinner(swarmSpinner),
+		spinner.WithStyle(lipgloss.NewStyle().Foreground(secondaryColor)),
+	)
+	return s
+}
 
 // separator returns a horizontal line of the given width.
 func separator(width int) string {

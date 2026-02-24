@@ -5,11 +5,11 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/dev-t0ny/swarm/internal/agent"
-	"github.com/dev-t0ny/swarm/internal/deps"
 	gitpkg "github.com/dev-t0ny/swarm/internal/git"
 	"github.com/dev-t0ny/swarm/internal/link"
 )
@@ -20,8 +20,6 @@ type newAgentState int
 const (
 	newAgentPicking newAgentState = iota
 	newAgentCreating
-	newAgentInstalling
-	newAgentDone
 )
 
 // agentOption is an agent type with its availability status.
@@ -32,10 +30,11 @@ type agentOption struct {
 
 // newAgentModel holds state for the new agent dialog.
 type newAgentModel struct {
-	agents   []agentOption
-	cursor   int
-	state    newAgentState
-	message  string
+	agents  []agentOption
+	cursor  int
+	state   newAgentState
+	message string
+	spinner spinner.Model
 }
 
 func newNewAgentModel() newAgentModel {
@@ -45,8 +44,9 @@ func newNewAgentModel() newAgentModel {
 		options = append(options, agentOption{Type: a.Agent, Available: a.Available})
 	}
 	return newAgentModel{
-		agents: options,
-		state:  newAgentPicking,
+		agents:  options,
+		state:   newAgentPicking,
+		spinner: newSwarmSpinner(),
 	}
 }
 
@@ -58,10 +58,6 @@ type agentCreatedMsg struct {
 	err        error
 }
 
-type depsInstalledMsg struct {
-	agentName string
-	err       error
-}
 
 // updateNewAgent handles input for the new agent dialog.
 func (a *App) updateNewAgent(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -84,13 +80,13 @@ func (a *App) updateNewAgent(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			a.newAgent.state = newAgentCreating
 			a.newAgent.message = fmt.Sprintf("Creating worktree for %s...", selected.Name)
-			return a, a.createAgentCmd(selected.Type)
+			return a, tea.Batch(a.newAgent.spinner.Tick, a.createAgentCmd(selected.Type))
 		case key.Matches(msg, a.keys.Back):
 			a.screen = ScreenDashboard
 			a.newAgent = newNewAgentModel()
 		}
-	case newAgentCreating, newAgentInstalling:
-		// Don't allow input while creating/installing
+	case newAgentCreating:
+		// Don't allow input while creating
 		if key.Matches(msg, a.keys.Back) {
 			// Allow cancel? For now just ignore
 		}
@@ -107,7 +103,6 @@ func (a *App) createAgentCmd(agentType agent.Type) tea.Cmd {
 	symlinks := a.cfg.Symlinks
 	tmuxDriver := a.tmux
 	swarmPaneID := a.swarmPaneID
-	installCmd := a.cfg.InstallCommand
 
 	// Pre-increment to avoid race if user creates multiple agents rapidly.
 	a.nextAgentNum++
@@ -166,29 +161,15 @@ func (a *App) createAgentCmd(agentType agent.Type) tea.Cmd {
 		_ = tmuxDriver.SelectPane(swarmPaneID)
 
 		instance := AgentInstance{
-			Name:       agentName,
-			AgentType:  agentType.Name,
-			Branch:     branchName,
-			WorkDir:    worktreePath,
-			PaneID:     paneID,
-			Status:     AgentRunning,
-			installCmd: installCmd,
+			Name:      agentName,
+			AgentType: agentType.Name,
+			Branch:    branchName,
+			WorkDir:   worktreePath,
+			PaneID:    paneID,
+			Status:    AgentRunning,
 		}
 
 		return agentCreatedMsg{instance: instance, linkErrors: linkErrors}
-	}
-}
-
-// installDepsCmd returns a tea.Cmd that runs npm install in a worktree.
-// installCommand is captured before the closure to avoid reading App state from goroutine.
-func installDepsCmd(agentName string, worktreeDir string, installCommand string) tea.Cmd {
-	return func() tea.Msg {
-		installer := deps.NewInstaller(installCommand)
-		if installer.NeedsInstall(worktreeDir) {
-			_, err := installer.Install(worktreeDir)
-			return depsInstalledMsg{agentName: agentName, err: err}
-		}
-		return depsInstalledMsg{agentName: agentName}
 	}
 }
 
@@ -212,32 +193,19 @@ func (a *App) handleAgentCreated(msg agentCreatedMsg) (tea.Model, tea.Cmd) {
 	// Show symlink warnings if any
 	if len(msg.linkErrors) > 0 {
 		a.statusMsg = fmt.Sprintf("Symlink warnings: %v", msg.linkErrors)
+	} else {
+		a.statusMsg = ""
 	}
 
-	// Start dependency installation in background
-	a.newAgent.state = newAgentInstalling
-	a.newAgent.message = fmt.Sprintf("Installing dependencies for %s...", msg.instance.Name)
-
-	return a, installDepsCmd(msg.instance.Name, msg.instance.WorkDir, msg.instance.installCmd)
-}
-
-// handleDepsInstalled processes the result of dependency installation.
-func (a *App) handleDepsInstalled(msg depsInstalledMsg) (tea.Model, tea.Cmd) {
-	if msg.err != nil {
-		a.statusMsg = fmt.Sprintf("Deps install warning for %s: %v", msg.agentName, msg.err)
-	}
-
-	// Done — return to dashboard
 	a.screen = ScreenDashboard
 	a.newAgent = newNewAgentModel()
-	a.statusMsg = ""
 	return a, nil
 }
 
 // viewNewAgent renders the new agent dialog.
 func (a *App) viewNewAgent() string {
 	switch a.newAgent.state {
-	case newAgentCreating, newAgentInstalling:
+	case newAgentCreating:
 		return a.viewNewAgentProgress()
 	default:
 		return a.viewNewAgentPicker()
@@ -281,8 +249,9 @@ func (a *App) viewNewAgentPicker() string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(renderKeyHint("enter", "select"))
-	b.WriteString(renderKeyHint("esc", "cancel"))
+	b.WriteString("  ")
+	b.WriteString(hintBar("enter", "select", "esc", "cancel"))
+	b.WriteString("\n")
 
 	return b.String()
 }
@@ -293,9 +262,7 @@ func (a *App) viewNewAgentProgress() string {
 	b.WriteString(titleStyle.Render("New Agent"))
 	b.WriteString("\n\n")
 
-	// Show spinner-like message
-	icon := warningStyle.Render("◐")
-	b.WriteString(fmt.Sprintf("  %s %s", icon, a.newAgent.message))
+	b.WriteString(fmt.Sprintf("  %s %s", a.newAgent.spinner.View(), descStyle.Render(a.newAgent.message)))
 	b.WriteString("\n")
 
 	return b.String()

@@ -269,8 +269,9 @@ func (a *App) viewCloseAgent() string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(renderKeyHint("enter", "confirm"))
-	b.WriteString(renderKeyHint("esc", "cancel"))
+	b.WriteString("  ")
+	b.WriteString(hintBar("enter", "confirm", "esc", "cancel"))
+	b.WriteString("\n")
 
 	return b.String()
 }

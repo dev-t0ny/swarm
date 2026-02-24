@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 
 	gitpkg "github.com/dev-t0ny/swarm/internal/git"
@@ -23,11 +24,13 @@ type cleanupModel struct {
 	cursor  int
 	state   cleanupState
 	message string
+	spinner spinner.Model
 }
 
 func newCleanupModel() cleanupModel {
 	return cleanupModel{
-		state: cleanupConfirm,
+		state:   cleanupConfirm,
+		spinner: newSwarmSpinner(),
 	}
 }
 
@@ -45,7 +48,7 @@ func (a *App) updateCleanup(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case msg.String() == "y" || msg.String() == "Y":
 			a.cleanup.state = cleanupRunning
 			a.cleanup.message = "Cleaning up all agents..."
-			return a, a.cleanupAllCmd()
+			return a, tea.Batch(a.cleanup.spinner.Tick, a.cleanupAllCmd())
 		case msg.String() == "n" || msg.String() == "N" || key.Matches(msg, a.keys.Back):
 			a.screen = ScreenDashboard
 			a.cleanup = newCleanupModel()
@@ -148,7 +151,8 @@ func (a *App) viewCleanupConfirm() string {
 	}
 	b.WriteString("\n")
 
-	b.WriteString(fmt.Sprintf("  %s  /  %s\n", keyStyle.Render("[y] confirm"), descStyle.Render("[n] cancel")))
+	b.WriteString("  ")
+	b.WriteString(hintBar("y", "confirm", "n", "cancel"))
 
 	return b.String()
 }
@@ -159,8 +163,7 @@ func (a *App) viewCleanupProgress() string {
 	b.WriteString(titleStyle.Render("Cleanup All"))
 	b.WriteString("\n\n")
 
-	icon := warningStyle.Render("◐")
-	b.WriteString(fmt.Sprintf("  %s %s", icon, a.cleanup.message))
+	b.WriteString(fmt.Sprintf("  %s %s", a.cleanup.spinner.View(), descStyle.Render(a.cleanup.message)))
 	b.WriteString("\n")
 
 	return b.String()
