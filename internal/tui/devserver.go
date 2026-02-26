@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -13,13 +12,12 @@ import (
 type devServerState int
 
 const (
-	devServerPicking devServerState = iota
+	devServerIdle devServerState = iota
 	devServerStarting
 )
 
-// devServerModel holds state for the dev server dialog.
+// devServerModel holds state for the dev server progress spinner.
 type devServerModel struct {
-	cursor  int
 	state   devServerState
 	message string
 	spinner spinner.Model
@@ -27,7 +25,7 @@ type devServerModel struct {
 
 func newDevServerModel() devServerModel {
 	return devServerModel{
-		state:   devServerPicking,
+		state:   devServerIdle,
 		spinner: newSwarmSpinner(),
 	}
 }
@@ -41,44 +39,15 @@ type devServerStartedMsg struct {
 	err       error
 }
 
-// updateDevServer handles input for the dev server dialog.
-func (a *App) updateDevServer(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch a.devServer.state {
-	case devServerPicking:
-		// If no dev_command is configured, any key goes back
-		if a.cfg.DevCommand == "" {
-			if key.Matches(msg, a.keys.Back) || key.Matches(msg, a.keys.Focus) {
-				a.screen = ScreenDashboard
-				a.devServer = newDevServerModel()
-			}
-			return a, nil
-		}
+type devServerStoppedMsg struct {
+	agentName string
+	err       error
+}
 
-		switch {
-		case key.Matches(msg, a.keys.Up):
-			if a.devServer.cursor > 0 {
-				a.devServer.cursor--
-			}
-		case key.Matches(msg, a.keys.Down):
-			if a.devServer.cursor < len(a.agents)-1 {
-				a.devServer.cursor++
-			}
-		case key.Matches(msg, a.keys.Focus): // Enter
-			agent := a.agents[a.devServer.cursor]
-			if agent.DevPaneID != "" {
-				a.statusMsg = fmt.Sprintf("%s already has a dev server on :%d", agent.Name, agent.DevPort)
-				a.screen = ScreenDashboard
-				a.devServer = newDevServerModel()
-				return a, nil
-			}
-			a.devServer.state = devServerStarting
-			a.devServer.message = fmt.Sprintf("Starting dev server for %s...", agent.Name)
-			return a, tea.Batch(a.devServer.spinner.Tick, a.startDevServerCmd(agent.Name, agent.PaneID, agent.WorkDir))
-		case key.Matches(msg, a.keys.Back):
-			a.screen = ScreenDashboard
-			a.devServer = newDevServerModel()
-		}
-	}
+// updateDevServer handles input for the dev server progress screen.
+// The picker is gone — "d" on the dashboard directly starts/stops the dev server.
+func (a *App) updateDevServer(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Only the starting state is shown as a modal now; back key dismisses it
 	return a, nil
 }
 
@@ -149,67 +118,41 @@ func (a *App) handleDevServerStarted(msg devServerStartedMsg) (tea.Model, tea.Cm
 	return a, nil
 }
 
-// viewDevServer renders the dev server dialog.
-func (a *App) viewDevServer() string {
-	switch a.devServer.state {
-	case devServerStarting:
-		return a.viewDevServerProgress()
-	default:
-		return a.viewDevServerPicker()
+// stopDevServerCmd returns a tea.Cmd that kills the dev server pane for an agent.
+func (a *App) stopDevServerCmd(agentName string, devPaneID string) tea.Cmd {
+	tmuxDriver := a.tmux
+	swarmPaneID := a.swarmPaneID
+	ports := a.ports
+
+	return func() tea.Msg {
+		_ = tmuxDriver.KillPane(devPaneID)
+		_ = tmuxDriver.ApplyTiledLayout()
+		_ = tmuxDriver.SetPaneWidth(swarmPaneID, swarmPaneWidth)
+		_ = tmuxDriver.SelectPane(swarmPaneID)
+		ports.ReleaseByAgent(agentName)
+		return devServerStoppedMsg{agentName: agentName}
 	}
 }
 
-func (a *App) viewDevServerPicker() string {
-	var b strings.Builder
-
-	b.WriteString(titleStyle.Render("Dev Server"))
-	b.WriteString("\n\n")
-
-	// If no dev_command is configured, show setup instructions
-	if a.cfg.DevCommand == "" {
-		b.WriteString(descStyle.Render("No dev_command configured."))
-		b.WriteString("\n\n")
-		b.WriteString(descStyle.Render("Add to .swarmrc:"))
-		b.WriteString("\n\n")
-		b.WriteString(keyStyle.Render("  dev_command: npm run dev -- --port {port}"))
-		b.WriteString("\n\n")
-		b.WriteString(descStyle.Render("Use {port} as a placeholder for the allocated port."))
-		b.WriteString("\n\n")
-		b.WriteString("  ")
-		b.WriteString(hintBar("esc", "back"))
-		b.WriteString("\n")
-		return b.String()
+// handleDevServerStopped processes the result of stopping a dev server.
+func (a *App) handleDevServerStopped(msg devServerStoppedMsg) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		a.statusMsg = fmt.Sprintf("Error stopping dev server: %v", msg.err)
+		return a, nil
 	}
-
-	b.WriteString(descStyle.Render("Select agent to attach dev server:"))
-	b.WriteString("\n\n")
-
 	for i, agent := range a.agents {
-		var line string
-		status := ""
-		if agent.DevPaneID != "" {
-			status = descStyle.Render(fmt.Sprintf(" (already running :%d)", agent.DevPort))
+		if agent.Name == msg.agentName {
+			a.agents[i].DevPaneID = ""
+			a.agents[i].DevPort = 0
+			break
 		}
-
-		if i == a.devServer.cursor {
-			line = selectedStyle.Render(fmt.Sprintf(" %s %s ", agent.Name, agent.AgentType))
-			line += status
-		} else {
-			line = fmt.Sprintf("  %s %s%s", activeAgentStyle.Render(agent.Name), descStyle.Render(agent.AgentType), status)
-		}
-		b.WriteString(line)
-		b.WriteString("\n")
 	}
-
-	b.WriteString("\n")
-	b.WriteString("  ")
-	b.WriteString(hintBar("enter", "start", "esc", "cancel"))
-	b.WriteString("\n")
-
-	return b.String()
+	a.statusMsg = ""
+	return a, nil
 }
 
-func (a *App) viewDevServerProgress() string {
+// viewDevServer renders the dev server progress spinner.
+func (a *App) viewDevServer() string {
 	var b strings.Builder
 
 	b.WriteString(titleStyle.Render("Dev Server"))

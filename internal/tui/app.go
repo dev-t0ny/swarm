@@ -76,6 +76,10 @@ func (w *paneDeathWatcher) loop() {
 	}
 }
 
+// swarmPaneWidth is the fixed column width for the swarm control pane.
+// Kept narrow so agent panes get maximum terminal space.
+const swarmPaneWidth = 45
+
 // Screen represents which screen is currently active.
 type Screen int
 
@@ -199,6 +203,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a.handleAgentCreated(msg)
 	case devServerStartedMsg:
 		return a.handleDevServerStarted(msg)
+	case devServerStoppedMsg:
+		return a.handleDevServerStopped(msg)
 	case agentClosedMsg:
 		return a.handleAgentClosed(msg)
 	case cleanupDoneMsg:
@@ -285,8 +291,21 @@ func (a *App) updateDashboard(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			a.screen = ScreenCloseAgent
 		}
 	case key.Matches(msg, a.keys.DevServer):
-		if len(a.agents) > 0 {
+		if len(a.agents) > 0 && a.cursor < len(a.agents) {
+			agent := a.agents[a.cursor]
+			if agent.DevPaneID != "" {
+				// Toggle off — kill the dev server pane
+				return a, a.stopDevServerCmd(agent.Name, agent.DevPaneID)
+			}
+			if a.cfg.DevCommand == "" {
+				a.statusMsg = "No dev_command configured — add to .swarmrc"
+				return a, nil
+			}
+			// Start dev server directly for selected agent
 			a.screen = ScreenDevServer
+			a.devServer.state = devServerStarting
+			a.devServer.message = fmt.Sprintf("Starting dev server for %s...", agent.Name)
+			return a, tea.Batch(a.devServer.spinner.Tick, a.startDevServerCmd(agent.Name, agent.PaneID, agent.WorkDir))
 		}
 	case key.Matches(msg, a.keys.Cleanup):
 		if len(a.agents) > 0 {
@@ -444,7 +463,11 @@ func (a *App) viewDashboardActive(w int) string {
 	b.WriteString("\n\n")
 
 	b.WriteString("  ")
-	b.WriteString(hintBar("n", "new", "d", "dev", "x", "close", "C", "cleanup", "q", "quit"))
+	devHint := "dev"
+	if a.cursor < len(a.agents) && a.agents[a.cursor].DevPaneID != "" {
+		devHint = "stop dev"
+	}
+	b.WriteString(hintBar("n", "new", "d", devHint, "x", "close", "C", "cleanup", "q", "quit"))
 
 	// Status message
 	if a.statusMsg != "" {

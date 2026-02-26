@@ -121,9 +121,9 @@ func doCloseApply(agentInst AgentInstance, repoRoot string, tmuxDriver *tmux.Dri
 		mergePrompt = strings.ReplaceAll(cfgAgent.MergePrompt, "{base_branch}", baseBranch)
 	}
 
-	// Focus the agent's pane and send the merge instruction
+	// Focus the agent's pane and send the merge instruction as literal text
 	_ = tmuxDriver.SelectPane(agentInst.PaneID)
-	_ = tmuxDriver.SendKeys(agentInst.PaneID, mergePrompt)
+	_ = tmuxDriver.SendText(agentInst.PaneID, mergePrompt)
 
 	return agentClosedMsg{
 		agentName: agentInst.Name,
@@ -144,6 +144,7 @@ func doCloseKeep(agentInst AgentInstance, tmuxDriver *tmux.Driver, swarmPaneID s
 
 	// Reflow the grid and refocus control pane
 	_ = tmuxDriver.ApplyTiledLayout()
+	_ = tmuxDriver.SetPaneWidth(swarmPaneID, swarmPaneWidth)
 	_ = tmuxDriver.SelectPane(swarmPaneID)
 
 	return agentClosedMsg{
@@ -165,6 +166,7 @@ func doCloseDrop(agentInst AgentInstance, repoRoot string, tmuxDriver *tmux.Driv
 
 	// Reflow the grid and refocus control pane
 	_ = tmuxDriver.ApplyTiledLayout()
+	_ = tmuxDriver.SetPaneWidth(swarmPaneID, swarmPaneWidth)
 	_ = tmuxDriver.SelectPane(swarmPaneID)
 
 	// Remove the worktree and delete the branch

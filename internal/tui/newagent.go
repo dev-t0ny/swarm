@@ -136,8 +136,9 @@ func (a *App) createAgentCmd(agentType agent.Type) tea.Cmd {
 			return agentCreatedMsg{err: fmt.Errorf("create tmux pane: %w", err)}
 		}
 
-		// 4. Apply tiled layout so all panes form a grid
+		// 4. Apply tiled layout so all panes form a grid, then shrink the swarm pane
 		_ = tmuxDriver.ApplyTiledLayout()
+		_ = tmuxDriver.SetPaneWidth(swarmPaneID, swarmPaneWidth)
 
 		// 5. Label the pane
 		paneTitle := fmt.Sprintf("%s  %s  %s", agentName, agentType.Name, branchName)

@@ -173,6 +173,17 @@ func (d *Driver) SendKeys(paneID string, keys string) error {
 	return exec.Command("tmux", "send-keys", "-t", paneID, keys, "Enter").Run()
 }
 
+// SendText sends literal text to a pane followed by Enter.
+// Unlike SendKeys, this uses -l to prevent tmux from interpreting key names.
+func (d *Driver) SendText(paneID string, text string) error {
+	// Send the text literally (no key name interpretation)
+	if err := exec.Command("tmux", "send-keys", "-t", paneID, "-l", text).Run(); err != nil {
+		return err
+	}
+	// Then press Enter
+	return exec.Command("tmux", "send-keys", "-t", paneID, "Enter").Run()
+}
+
 // SplitWindowV creates a vertical split (new pane below) within a window and returns the new pane ID.
 func (d *Driver) SplitWindowV(targetPane string, workdir string) (string, error) {
 	args := []string{"split-window", "-v", "-t", targetPane, "-P", "-F", "#{pane_id}"}
@@ -184,6 +195,17 @@ func (d *Driver) SplitWindowV(targetPane string, workdir string) (string, error)
 		return "", fmt.Errorf("split-window vertical: %w", err)
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+// ResizePane resizes a pane. Use negative values to shrink.
+// direction is one of: -L (left), -R (right), -U (up), -D (down).
+func (d *Driver) ResizePane(paneID string, direction string, amount int) error {
+	return exec.Command("tmux", "resize-pane", "-t", paneID, direction, fmt.Sprintf("%d", amount)).Run()
+}
+
+// SetPaneWidth sets a pane to an exact column width.
+func (d *Driver) SetPaneWidth(paneID string, width int) error {
+	return exec.Command("tmux", "resize-pane", "-t", paneID, "-x", fmt.Sprintf("%d", width)).Run()
 }
 
 // SelectPane focuses a specific pane.
